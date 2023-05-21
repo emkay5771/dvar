@@ -1,0 +1,370 @@
+from selenium import webdriver #type: ignore
+from selenium.webdriver.common.by import By #type: ignore
+from selenium.webdriver.support.ui import WebDriverWait #type: ignore
+from selenium.webdriver.support import expected_conditions as EC #type: ignore
+import os
+import time
+import fitz #type: ignore
+from base64 import b64decode
+from dateutil.relativedelta import relativedelta #type: ignore
+from datetime import date #type: ignore
+from datetime import datetime as dt #type: ignore
+from datetime import timedelta #type: ignore
+import streamlit as st #type: ignore
+import PyPDF2 #type: ignore
+from PyPDF2 import PdfMerger #type: ignore
+import glob
+
+#TODO: build streamlit ui
+
+st.set_page_config(page_title="Dvar Creator", page_icon="📄", layout="wide", initial_sidebar_state="collapsed")
+st.title("Dvar Creator")
+
+options = webdriver.ChromeOptions()
+options.add_argument('--headless')
+options.add_argument('--no-sandbox')
+options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36")
+options.add_experimental_option('prefs', {
+    "download.default_directory": "~/ccscraper/dvarmalchus",
+    "download.prompt_for_download": False,
+    "download.directory_upgrade": True,
+    "plugins.always_open_pdf_externally": True
+})
+driver = webdriver.Chrome(options=options)
+    
+def download_wait(path_to_downloads):
+    seconds = 0
+    dl_wait = True
+    while dl_wait and seconds < 20:
+        time.sleep(1)
+        dl_wait = False
+        for fname in os.listdir("/home/mendy/ccscraper/dvarmalchus"):
+            if fname.endswith('.crdownload'):
+                dl_wait = True
+        seconds += 1
+    return seconds   
+
+def dvarget(session):
+    driver = webdriver.Chrome(options=options)
+    driver.get("https://dvarmalchus.org")
+    for each in ["/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div/div/div",
+                "/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div[2]/div/div/a/span/span[2]",
+                '/html/body/div[1]/section[9]/div/div/div/div[3]/div/div/div/div[1]/div/section/div/div/div/section/div/div/div/div/div/div/a/span/span[2]',
+                '/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div[2]/div/div/a']:
+        if driver.find_element(By.XPATH, each).text == "להורדת החוברת השבועית":
+            print("clicking regular" + each)
+            driver.find_element(By.XPATH, each).click()
+        else:
+            if driver.find_element(By.XPATH, each).text != "להורדת החוברת השבועית - חו״ל":
+                print("skipping " + each)
+                continue
+            elif driver.find_element(By.XPATH, each).text == "להורדת החוברת השבועית - חו״ל":
+                print("clicking alternate" + each)
+                driver.find_element(By.XPATH, each).click()
+                break
+
+    driver.switch_to.window(driver.window_handles[1])
+    #driver.save_screenshot("dvar.png")
+    download_wait("~/ccscraper/dvarmalchus")
+    #os.remove("dvar.png")
+    files = os.listdir("/home/mendy/ccscraper/dvarmalchus") # Get a list of all files in the download directory
+    print(files)
+    for file in files:
+        if file.endswith(".pdf"):
+            if len(file) >= 25:
+                os.rename(os.path.join("/home/mendy/ccscraper/dvarmalchus", file), os.path.join("/home/mendy/ccscraper/dvarmalchus", f"dvar{session}.pdf")) # Rename the file to "dvar.pdf"
+                break # Stop looping through the files once the file has been renamed
+    driver.quit()
+
+def chabadget(dor, opt, session):
+    pdf_options = {
+    'scale': 0.8,
+    'margin-top': '0.1in',
+    'margin-right': '0.1in',
+    'margin-bottom': '0.1in',
+    'margin-left': '0.1in',
+    }
+    if os.path.exists(f"/home/mendy/ccscraper/dvarmalchus/Chumash{session}.pdf") != True:
+        merger = PdfMerger()
+        if 'Chumash' in opt:
+            for i in dor:
+                driver = webdriver.Chrome(options=options)
+                driver.get(f"https://www.chabad.org/dailystudy/torahreading.asp?tdate={i}#lt=he")
+                wait = WebDriverWait(driver, 10)
+                element = wait.until(EC.presence_of_element_located((By.ID, "content")))
+                pdf = driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
+                with open(f"temp{session}.pdf", "ab") as f:
+                    f.write(b64decode(pdf["data"]))
+                f.close()
+                driver.quit()
+                merger.append(f"temp{session}.pdf")
+
+            merger.write(f"Chumash{session}.pdf")
+            merger.close()
+            os.remove("temp.pdf")
+    if os.path.exists(f"/home/mendy/ccscraper/dvarmalchus/Tanya{session}.pdf") != True:
+        merger2 = PdfMerger()
+        if 'Tanya' in opt:
+            for i in dor:
+                driver = webdriver.Chrome(options=options)
+                driver.get(f"https://www.chabad.org/dailystudy/tanya.asp?date={i}&commentary=false#lt=he")
+                wait = WebDriverWait(driver, 10)
+                element = wait.until(EC.presence_of_element_located((By.ID, "content")))
+                time.sleep(3)
+                pdf = driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
+                with open(f"temp{session}.pdf", "ab") as f:
+                    f.write(b64decode(pdf["data"]))
+                f.close()
+                driver.quit()
+                merger2.append(f"temp{session}.pdf")
+
+            merger2.write(f"Tanya{session}.pdf")
+            merger2.close()
+            os.remove(f"temp{session}.pdf")
+            driver.quit()
+
+def rambamenglish(dor, session):
+    pdf_options = {
+    'scale': 0.48,
+    'margin-top': '0.1in',
+    'margin-right': '0.1in',
+    'margin-bottom': '0.1in',
+    'margin-left': '0.1in',
+    }
+    merger = PdfMerger()
+    if os.path.exists(f"/home/mendy/ccscraper/dvarmalchus/Rambam{session}.pdf") != True:
+        for i in dor:
+            driver = webdriver.Chrome(options=options)
+            driver.get(f"https://www.chabad.org/dailystudy/rambam.asp?rambamchapters=3&tdate={i}#lt=both")
+            wait = WebDriverWait(driver, 10)
+            element = wait.until(EC.presence_of_element_located((By.ID, "content")))
+            pdf = driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
+            with open(f"temp{session}.pdf", "ab") as f:
+                f.write(b64decode(pdf["data"]))
+            f.close()
+            driver.quit()
+
+            merger.append(f"temp{session}.pdf")
+
+        merger.write(f"Rambam{session}.pdf")
+        merger.close()
+        os.remove(f"temp{session}.pdf")
+
+def daytoheb(week, dow):
+    for i in week:
+        if i == 'Sunday':
+            dow.append('יום ראשון')
+        elif i == 'Monday':
+            dow.append('יום שני')
+        elif i == 'Tuesday':
+            dow.append('יום שלישי')
+        elif i == 'Wednesday':
+            dow.append('יום רביעי')
+        elif i == 'Thursday':
+            dow.append('יום חמישי')
+        elif i == 'Friday':
+            dow.append('יום שישי')
+        elif i == 'Shabbos':
+            dow.append('שבת קודש')
+    return dow
+
+def opttouse(opt, optconv):
+    for i in opt:
+        if i == 'Chumash':
+            optconv.append('חומש יומי')
+        elif i == 'Tanya':
+            optconv.append('תניא יומי')
+        elif i == 'Rambam-Hebrew':
+            optconv.append('רמב"ם - שלושה פרקים ליום')
+        elif i == 'Haftorah':
+            optconv.append('חומש לקריאה בציבור')
+        elif i == 'Rambam-Bilingual':
+            optconv.append(i)
+    return optconv
+        
+def daytorambam(week, dor):
+    today = date.today()
+    day_to_n = {'Monday': 0, 'Tuesday': 1, 'Wednesday': 2, 'Thursday': 3, 'Friday': 4, 'Shabbos': 5, 'Sunday': 6}
+    for i in week:
+        n = day_to_n[i]
+        print(n)
+        linkappend = today + relativedelta(weekday=n)
+        y, m, d = str(linkappend).split("-")
+        dor.append(f'{m}%2F{d}%2F{y}')
+    return dor
+
+def dynamicmake(dow, optconv, opt, source, session):
+    output_dir = "/home/mendy/ccscraper/dvarmalchus"
+    try:
+        doc = fitz.open(f"/home/mendy/ccscraper/dvarmalchus/dvar{session}.pdf")
+        toc = doc.get_toc()
+    except:
+        pass
+    doc_out = fitz.open()
+    '''print(toc)'''
+    if source == False:
+            print("Chabad.org")
+            print(opt)
+            for option in opt:
+                if option == 'Chumash':
+                    doc_out.insert_pdf(fitz.open(f"/home/mendy/ccscraper/dvarmalchus/Chumash{session}.pdf"))
+                elif option == 'Tanya':
+                    doc_out.insert_pdf(fitz.open(f"/home/mendy/ccscraper/dvarmalchus/Tanya{session}.pdf"))
+                elif option == 'Rambam-Bilingual':
+                    doc.out.insert_pdf(fitz.open(f"/home/mendy/ccscraper/dvarmalchus/Rambam{session}.pdf"))
+                continue
+    else:
+        for q in optconv:
+            for z in dow:
+                for i, top_level in enumerate(toc):
+                    if not top_level[2]:
+                        continue  # skip top-level bookmarks without a page number
+                    if top_level[1] == q:
+                        for j, sub_level in enumerate(toc[i+1:], start=i+1):
+                            if sub_level[0] != top_level[0] + 1:
+                                break  # stop when we reach the next top-level bookmark
+                            if z in sub_level[1]:
+                                start_page = sub_level[2] - 1
+                                if top_level[1] == "חומש יומי":
+                                    end_page = toc[j+1][2] - 3
+                                    print("Chumash found")
+                                if top_level[1] == "תניא יומי":
+                                    end_page = toc[j+1][2] - 2
+                                    print("Tanya found")
+                                if top_level[1] == 'רמב"ם - שלושה פרקים ליום':
+                                    end_page = toc[j+1][2] - 1
+                                    print("Rambam found")
+                                doc_out.insert_pdf(doc, from_page=start_page, to_page=end_page)
+                                continue
+            
+            if q == 'חומש לקריאה בציבור':
+                for i, item in enumerate(toc):
+                    #print(item)
+                    if item[1] == 'חומש לקריאה בציבור':
+                        pdf_file = open(f"/home/mendy/ccscraper/dvarmalchus/dvar{session}.pdf", "rb")
+                        pdf_reader = PyPDF2.PdfReader(pdf_file)
+                        page_num_start = item[2] - 1
+                        #print(page_num_start)
+                        page_num_end = toc[i+1][2] - 3
+                        #print(page_num_end)
+                        print("Torah reading found")
+                        for page_num in range(page_num_start, page_num_end):
+                            #print(page_num)
+                            page = pdf_reader.pages[page_num]
+                            text = page.extract_text()
+                            #print(text)
+                            if "ברכת הפטורה" in text or "xtd enk dxhtdd renyl" in text:
+                                doc_out.insert_pdf(doc, from_page=page_num, to_page=page_num_end)
+                                continue
+            elif q == 'Rambam-Bilingual':
+                doc_out.insert_pdf(fitz.open(f"/home/mendy/ccscraper/dvarmalchus/Rambam{session}.pdf")) 
+                print("Appended")
+                continue
+
+                      
+        
+                             
+    doc_out.save(os.path.join(output_dir, f"output_dynamic{session}.pdf"))
+    doc_out.close()
+
+
+with st.form(key="dvarform", clear_on_submit=False):
+    st.title("Printout Creator :book:")
+    week = st.multiselect('Select the days of the week.', options=['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos'])
+    opt = st.multiselect('Select what materials you want.', options=['Chumash', 'Tanya', 'Rambam-Hebrew', 'Rambam-Bilingual', 'Haftorah'])
+    source = st.checkbox('Use Dvar Malchus, or get from Chabad.org? If checked, sources from Dvar Malchus are used.', value=True)
+    submit_button = st.form_submit_button(label="Generate PDF")
+
+if submit_button:
+    if id not in st.session_state:
+        st.session_state['id'] = dt.now()
+    session = st.session_state.id
+    weekorder = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos']
+    optorder = ['Chumash', 'Tanya', 'Rambam-Hebrew', 'Rambam-Bilingual', 'Haftorah']
+    dow = []
+    optconv = []
+    dor = []
+    week = sorted(week, key=weekorder.index)
+    opt = sorted(opt, key=optorder.index)
+
+    daytoheb(week, dow)
+    opttouse(opt, optconv)
+    print(optconv)
+    if source == True:
+        if os.path.exists(f"/home/mendy/ccscraper/dvarmalchus/dvar{session}.pdf") == False:
+            try:
+                dvarget(session)
+            except:
+                source = False
+
+    if source == False:
+        daytorambam(week, dor)
+        chabadget(dor, opt, session)
+
+    if 'Rambam-Bilingual' in opt:
+        daytorambam(week, dor)
+        rambamenglish(dor, session)
+
+    dynamicmake(dow, optconv, opt, source, session)
+
+    if os.path.exists(f"/home/mendy/ccscraper/dvarmalchus/output_dynamic{session}.pdf"):
+        with open(f"/home/mendy/ccscraper/dvarmalchus/output_dynamic{session}.pdf", "rb") as f:
+            st.download_button(label="Download", data=f, file_name="output_dynamic.pdf", mime="application/pdf")
+
+
+    if glob.glob("Rambam*.pdf"):
+        for file in glob.glob("Rambam*.pdf"):
+            # remove the prefix "flights" and the suffix ".csv" from the file name
+            timestamp = file.lstrip("Rambam").rstrip(".pdf")
+            # parse the timestamp using the format string "%Y-%m-%d %H:%M:%S.%f"
+            file_datetime = dt.strptime(timestamp, "%Y-%m-%d %H:%M:%S.%f")
+            # check if the file is older than 10 minutes
+            if dt.now() - file_datetime > timedelta(minutes=1):
+                if file != f'Rambam{session}.pdf':
+                    os.remove(file)
+
+    if glob.glob("Chumash*.pdf"):
+        for file in glob.glob("Chumash*.pdf"):
+            # remove the prefix "flights" and the suffix ".csv" from the file name
+            timestamp = file.lstrip("Chumash").rstrip(".pdf")
+            # parse the timestamp using the format string "%Y-%m-%d %H:%M:%S.%f"
+            file_datetime = dt.strptime(timestamp, "%Y-%m-%d %H:%M:%S.%f")
+            # check if the file is older than 10 minutes
+            if dt.now() - file_datetime > timedelta(minutes=1):
+                if file != f'Chumash{session}.pdf':
+                    os.remove(file)
+
+    if glob.glob("Tanya*.pdf"):
+        for file in glob.glob("Tanya*.pdf"):
+            # remove the prefix "flights" and the suffix ".csv" from the file name
+            timestamp = file.lstrip("Tanya").rstrip(".pdf")
+            # parse the timestamp using the format string "%Y-%m-%d %H:%M:%S.%f"
+            file_datetime = dt.strptime(timestamp, "%Y-%m-%d %H:%M:%S.%f")
+            # check if the file is older than 10 minutes
+            if dt.now() - file_datetime > timedelta(minutes=1):
+                if file != f'Tanya{session}.pdf':
+                    os.remove(file)
+
+    if glob.glob("dvar*.pdf"):
+        for file in glob.glob("dvar*.pdf"):
+            # remove the prefix "flights" and the suffix ".csv" from the file name
+            timestamp = file.lstrip("dvar").rstrip(".pdf")
+            # parse the timestamp using the format string "%Y-%m-%d %H:%M:%S.%f"
+            file_datetime = dt.strptime(timestamp, "%Y-%m-%d %H:%M:%S.%f")
+            # check if the file is older than 10 minutes
+            if dt.now() - file_datetime > timedelta(minutes=1):
+                if file != f'dvar{session}.pdf':
+                    os.remove(file)
+    
+    if glob.glob("output_dynamic*.pdf"):
+        for file in glob.glob("output_dynamic*.pdf"):
+            # remove the prefix "flights" and the suffix ".csv" from the file name
+            timestamp = file.lstrip("output_dynamic").rstrip(".pdf")
+            # parse the timestamp using the format string "%Y-%m-%d %H:%M:%S.%f"
+            file_datetime = dt.strptime(timestamp, "%Y-%m-%d %H:%M:%S.%f")
+            # check if the file is older than 10 minutes
+            if dt.now() - file_datetime > timedelta(minutes=1):
+                if file != f'output_dynamic{session}.pdf':
+                    os.remove(file)
+
+
