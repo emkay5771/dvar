@@ -23,7 +23,7 @@ st.title("Dvar Creator")
 options = webdriver.ChromeOptions()
 options.add_argument('--headless')
 options.add_argument('--no-sandbox')
-options.add_argument("--disable-gpu")
+options.add_argument('--disable-gpu')
 options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36")
 options.add_experimental_option('prefs', {
     "download.default_directory": "~/ccscraper/dvarmalchus",
@@ -68,13 +68,15 @@ def dvarget(session):
     #driver.save_screenshot("dvar.png")
     download_wait("~/ccscraper/dvarmalchus")
     #os.remove("dvar.png")
-    files = os.listdir("/home/mendy/ccscraper/dvarmalchus") # Get a list of all files in the download directory
-    print(files)
+
+    files = os.listdir("/home/mendy/ccscraper/dvarmalchus")
+    sessionyear = "2023" # set the session variable to "2023"
     for file in files:
-        if file.endswith(".pdf"):
-            if len(file) >= 25:
-                os.rename(os.path.join("/home/mendy/ccscraper/dvarmalchus", file), os.path.join("/home/mendy/ccscraper/dvarmalchus", f"dvar{session}.pdf")) # Rename the file to "dvar.pdf"
-                break # Stop looping through the files once the file has been renamed
+        if file.endswith(".pdf") and sessionyear not in file: # check if the file is a pdf and does not contain the session variable
+            print("renaming " + file)
+            os.rename(os.path.join("/home/mendy/ccscraper/dvarmalchus", file), os.path.join("/home/mendy/ccscraper/dvarmalchus", f"dvar{session}.pdf"))
+
+
     driver.quit()
 
 def chabadget(dor, opt, session):
