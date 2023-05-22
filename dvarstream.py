@@ -18,7 +18,7 @@ import glob
 #TODO: build streamlit ui
 
 st.set_page_config(page_title="Dvar Creator (ALPHA)", page_icon="📄", layout="wide", initial_sidebar_state="collapsed")
-st.title("Dvar Creator")
+st.title("Dvar Creator (ALPHA)")
 
 options = webdriver.ChromeOptions()
 options.add_argument('--headless')
@@ -275,7 +275,9 @@ def dynamicmake(dow, optconv, opt, source, session):
 
 
 with st.form(key="dvarform", clear_on_submit=False):
-    st.title("Printout Creator :book: (kind of broken-ish... but proof of concept)")
+    st.title("Printout Creator :book:")
+    st.write("(kind of broken-ish... but proof of concept)")
+    st.write("This app is designed to create a printout for the daily study of Chitas, Rambam, and Torah reading. It is designed to be used with the Dvar Malchus PDFs, but can also be used with Chabad.org.")
     week = st.multiselect('Select the days of the week.', options=['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos'])
     opt = st.multiselect('Select what materials you want.', options=['Chumash', 'Tanya', 'Rambam-Hebrew', 'Rambam-Bilingual', 'Haftorah'])
     source = st.checkbox('Try to use Dvar Malchus, or get from Chabad.org? If checked, sources from Dvar Malchus will attempt to be used.', value=True)
