@@ -27,7 +27,6 @@ options.add_argument('--disable-gpu')
 options.add_argument('--disable-dev-shm-usage')
 options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36")
 options.add_experimental_option('prefs', {
-    "download.default_directory": "/usr/",
     "download.prompt_for_download": False,
     "download.directory_upgrade": True,
     "plugins.always_open_pdf_externally": True
@@ -89,7 +88,7 @@ def chabadget(dor, opt, session):
     'margin-bottom': '0.1in',
     'margin-left': '0.1in',
     }
-    if os.path.exists(f"/usr/Chumash{session}.pdf") != True:
+    if os.path.exists(f"Chumash{session}.pdf") != True:
         merger = PdfMerger()
         if 'Chumash' in opt:
             for i in dor:
@@ -127,7 +126,8 @@ def chabadget(dor, opt, session):
             merger2.close()
             os.remove(f"temp{session}.pdf")
             driver.quit() #type: ignore
-            st.download_button(label="Download Chumash", data=f"Tanya{session}.pdf", file_name=f"Tanya{session}.pdf")
+            with open(f"Tanya{session}.pdf", "rb") as f:
+                st.download_button(label="Download Tanya", data=f, file_name=f"Tanya{session}.pdf", mime="application/pdf")
 def rambamenglish(dor, session):
     pdf_options = {
     'scale': 0.48,
@@ -199,7 +199,7 @@ def daytorambam(week, dor):
     return dor
 
 def dynamicmake(dow, optconv, opt, source, session):
-    output_dir = "/usr/"
+    output_dir = ""
     try:
         doc = fitz.open(f"dvar{session}.pdf")
         toc = doc.get_toc()
