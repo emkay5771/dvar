@@ -126,8 +126,8 @@ def chabadget(dor, opt, session):
             merger2.close()
             os.remove(f"temp{session}.pdf")
             driver.quit() #type: ignore
-            '''with open(f"Tanya{session}.pdf", "rb") as f:
-                st.download_button(label="Download Tanya", data=f, file_name=f"Tanya{session}.pdf", mime="application/pdf")'''
+            #with open(f"Tanya{session}.pdf", "rb") as f:
+          #      st.download_button(label="Download Tanya", data=f, file_name=f"Tanya{session}.pdf", mime="application/pdf")
 
 def rambamenglish(dor, session):
     pdf_options = {
@@ -217,7 +217,7 @@ def dynamicmake(dow, optconv, opt, source, session):
                 elif option == 'Tanya':
                     doc_out.insert_pdf(fitz.open(f"Tanya{session}.pdf"))
                 elif option == 'Rambam-Bilingual':
-                    doc.out.insert_pdf(fitz.open(f"Rambam{session}.pdf")) #type: ignore
+                    doc_out.insert_pdf(fitz.open(f"Rambam{session}.pdf")) #type: ignore
                 continue
     else:
         for q in optconv:
