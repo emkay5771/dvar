@@ -126,8 +126,9 @@ def chabadget(dor, opt, session):
             merger2.close()
             os.remove(f"temp{session}.pdf")
             driver.quit() #type: ignore
-            with open(f"Tanya{session}.pdf", "rb") as f:
-                st.download_button(label="Download Tanya", data=f, file_name=f"Tanya{session}.pdf", mime="application/pdf")
+            '''with open(f"Tanya{session}.pdf", "rb") as f:
+                st.download_button(label="Download Tanya", data=f, file_name=f"Tanya{session}.pdf", mime="application/pdf")'''
+
 def rambamenglish(dor, session):
     pdf_options = {
     'scale': 0.48,
@@ -277,7 +278,7 @@ with st.form(key="dvarform", clear_on_submit=False):
     st.title("Printout Creator :book:")
     week = st.multiselect('Select the days of the week.', options=['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos'])
     opt = st.multiselect('Select what materials you want.', options=['Chumash', 'Tanya', 'Rambam-Hebrew', 'Rambam-Bilingual', 'Haftorah'])
-    source = st.checkbox('Use Dvar Malchus, or get from Chabad.org? If checked, sources from Dvar Malchus are used.', value=True)
+    source = st.checkbox('Try to use Dvar Malchus, or get from Chabad.org? If checked, sources from Dvar Malchus will attempt to be used.', value=True)
     submit_button = st.form_submit_button(label="Generate PDF")
 
 if submit_button:
