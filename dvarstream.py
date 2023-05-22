@@ -105,7 +105,7 @@ def chabadget(dor, opt, session):
 
             merger.write(f"Chumash{session}.pdf")
             merger.close()
-            os.remove("temp.pdf")
+            os.remove(f"temp{session}.pdf")
     if os.path.exists(f"Tanya{session}.pdf") != True:
         merger2 = PdfMerger()
         if 'Tanya' in opt:
