@@ -107,7 +107,7 @@ def chabadget(dor, opt, session):
             merger.write(f"Chumash{session}.pdf")
             merger.close()
             os.remove("temp.pdf")
-    if os.path.exists(f"/usr/Tanya{session}.pdf") != True:
+    if os.path.exists(f"Tanya{session}.pdf") != True:
         merger2 = PdfMerger()
         if 'Tanya' in opt:
             for i in dor:
@@ -127,7 +127,7 @@ def chabadget(dor, opt, session):
             merger2.close()
             os.remove(f"temp{session}.pdf")
             driver.quit() #type: ignore
-            st.download_button(label="Download Chumash", data=f"/usr/Tanya{session}.pdf", file_name=f"Tanya{session}.pdf")
+            st.download_button(label="Download Chumash", data=f"Tanya{session}.pdf", file_name=f"Tanya{session}.pdf")
 def rambamenglish(dor, session):
     pdf_options = {
     'scale': 0.48,
