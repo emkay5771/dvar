@@ -31,7 +31,8 @@ options.add_experimental_option('prefs', {
     "download.directory_upgrade": True,
     "plugins.always_open_pdf_externally": True
 })
-driver = webdriver.Chrome(options=options)
+chrome_driver_path = "/usr/bin/chromedriver"
+driver = webdriver.Chrome(executable_path=chrome_driver_path, options=options)
     
 def download_wait(path_to_downloads):
     seconds = 0
