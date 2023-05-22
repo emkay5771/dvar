@@ -124,7 +124,7 @@ def chabadget(dor, opt, session):
             merger2.write(f"Tanya{session}.pdf")
             merger2.close()
             os.remove(f"temp{session}.pdf")
-            driver.quit()
+            driver.quit() #type: ignore
 
 def rambamenglish(dor, session):
     pdf_options = {
@@ -214,41 +214,41 @@ def dynamicmake(dow, optconv, opt, source, session):
                 elif option == 'Tanya':
                     doc_out.insert_pdf(fitz.open(f"/home/mendy/ccscraper/dvarmalchus/Tanya{session}.pdf"))
                 elif option == 'Rambam-Bilingual':
-                    doc.out.insert_pdf(fitz.open(f"/home/mendy/ccscraper/dvarmalchus/Rambam{session}.pdf"))
+                    doc.out.insert_pdf(fitz.open(f"/home/mendy/ccscraper/dvarmalchus/Rambam{session}.pdf")) #type: ignore
                 continue
     else:
         for q in optconv:
             for z in dow:
-                for i, top_level in enumerate(toc):
+                for i, top_level in enumerate(toc): #type: ignore
                     if not top_level[2]:
                         continue  # skip top-level bookmarks without a page number
                     if top_level[1] == q:
-                        for j, sub_level in enumerate(toc[i+1:], start=i+1):
+                        for j, sub_level in enumerate(toc[i+1:], start=i+1): #type: ignore
                             if sub_level[0] != top_level[0] + 1:
                                 break  # stop when we reach the next top-level bookmark
                             if z in sub_level[1]:
                                 start_page = sub_level[2] - 1
                                 if top_level[1] == "חומש יומי":
-                                    end_page = toc[j+1][2] - 3
+                                    end_page = toc[j+1][2] - 2 #type: ignore
                                     print("Chumash found")
                                 if top_level[1] == "תניא יומי":
-                                    end_page = toc[j+1][2] - 2
+                                    end_page = toc[j+1][2] - 2 #type: ignore
                                     print("Tanya found")
                                 if top_level[1] == 'רמב"ם - שלושה פרקים ליום':
-                                    end_page = toc[j+1][2] - 1
+                                    end_page = toc[j+1][2] - 1 #type: ignore
                                     print("Rambam found")
-                                doc_out.insert_pdf(doc, from_page=start_page, to_page=end_page)
+                                doc_out.insert_pdf(doc, from_page=start_page, to_page=end_page) #type: ignore
                                 continue
             
             if q == 'חומש לקריאה בציבור':
-                for i, item in enumerate(toc):
+                for i, item in enumerate(toc): #type: ignore
                     #print(item)
                     if item[1] == 'חומש לקריאה בציבור':
                         pdf_file = open(f"/home/mendy/ccscraper/dvarmalchus/dvar{session}.pdf", "rb")
                         pdf_reader = PyPDF2.PdfReader(pdf_file)
                         page_num_start = item[2] - 1
                         #print(page_num_start)
-                        page_num_end = toc[i+1][2] - 3
+                        page_num_end = toc[i+1][2] - 3 #type: ignore
                         #print(page_num_end)
                         print("Torah reading found")
                         for page_num in range(page_num_start, page_num_end):
@@ -257,7 +257,7 @@ def dynamicmake(dow, optconv, opt, source, session):
                             text = page.extract_text()
                             #print(text)
                             if "ברכת הפטורה" in text or "xtd enk dxhtdd renyl" in text:
-                                doc_out.insert_pdf(doc, from_page=page_num, to_page=page_num_end)
+                                doc_out.insert_pdf(doc, from_page=page_num, to_page=page_num_end) #type: ignore
                                 continue
             elif q == 'Rambam-Bilingual':
                 doc_out.insert_pdf(fitz.open(f"/home/mendy/ccscraper/dvarmalchus/Rambam{session}.pdf")) 
