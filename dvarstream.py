@@ -127,7 +127,7 @@ def chabadget(dor, opt, session):
             merger2.close()
             os.remove(f"temp{session}.pdf")
             driver.quit() #type: ignore
-
+            st.download_button(label="Download Chumash", data=f"/usr/Tanya{session}.pdf", file_name=f"Tanya{session}.pdf")
 def rambamenglish(dor, session):
     pdf_options = {
     'scale': 0.48,
