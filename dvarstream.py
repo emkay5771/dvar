@@ -27,7 +27,7 @@ options.add_argument('--disable-gpu')
 options.add_argument('--disable-dev-shm-usage')
 options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36")
 options.add_experimental_option('prefs', {
-    "download.default_directory": "~/ccscraper/dvarmalchus",
+    "download.default_directory": "/usr/",
     "download.prompt_for_download": False,
     "download.directory_upgrade": True,
     "plugins.always_open_pdf_externally": True
@@ -68,15 +68,15 @@ def dvarget(session):
 
     driver.switch_to.window(driver.window_handles[1])
     #driver.save_screenshot("dvar.png")
-    download_wait("~/ccscraper/dvarmalchus")
+    download_wait("/usr/")
     #os.remove("dvar.png")
 
-    files = os.listdir("/home/mendy/ccscraper/dvarmalchus")
+    files = os.listdir("/usr/")
     sessionyear = "2023" # set the session variable to "2023"
     for file in files:
         if file.endswith(".pdf") and sessionyear not in file: # check if the file is a pdf and does not contain the session variable
             print("renaming " + file)
-            os.rename(os.path.join("/home/mendy/ccscraper/dvarmalchus", file), os.path.join("/home/mendy/ccscraper/dvarmalchus", f"dvar{session}.pdf"))
+            os.rename(os.path.join("/usr/", file), os.path.join("/usr/", f"dvar{session}.pdf"))
 
 
     driver.quit()
@@ -89,7 +89,7 @@ def chabadget(dor, opt, session):
     'margin-bottom': '0.1in',
     'margin-left': '0.1in',
     }
-    if os.path.exists(f"/home/mendy/ccscraper/dvarmalchus/Chumash{session}.pdf") != True:
+    if os.path.exists(f"/usr/Chumash{session}.pdf") != True:
         merger = PdfMerger()
         if 'Chumash' in opt:
             for i in dor:
@@ -107,7 +107,7 @@ def chabadget(dor, opt, session):
             merger.write(f"Chumash{session}.pdf")
             merger.close()
             os.remove("temp.pdf")
-    if os.path.exists(f"/home/mendy/ccscraper/dvarmalchus/Tanya{session}.pdf") != True:
+    if os.path.exists(f"/usr/Tanya{session}.pdf") != True:
         merger2 = PdfMerger()
         if 'Tanya' in opt:
             for i in dor:
@@ -137,7 +137,7 @@ def rambamenglish(dor, session):
     'margin-left': '0.1in',
     }
     merger = PdfMerger()
-    if os.path.exists(f"/home/mendy/ccscraper/dvarmalchus/Rambam{session}.pdf") != True:
+    if os.path.exists(f"Rambam{session}.pdf") != True:
         for i in dor:
             driver = webdriver.Chrome(options=options)
             driver.get(f"https://www.chabad.org/dailystudy/rambam.asp?rambamchapters=3&tdate={i}#lt=both")
@@ -199,9 +199,9 @@ def daytorambam(week, dor):
     return dor
 
 def dynamicmake(dow, optconv, opt, source, session):
-    output_dir = "/home/mendy/ccscraper/dvarmalchus"
+    output_dir = "/usr/"
     try:
-        doc = fitz.open(f"/home/mendy/ccscraper/dvarmalchus/dvar{session}.pdf")
+        doc = fitz.open(f"dvar{session}.pdf")
         toc = doc.get_toc()
     except:
         pass
@@ -212,11 +212,11 @@ def dynamicmake(dow, optconv, opt, source, session):
             print(opt)
             for option in opt:
                 if option == 'Chumash':
-                    doc_out.insert_pdf(fitz.open(f"/home/mendy/ccscraper/dvarmalchus/Chumash{session}.pdf"))
+                    doc_out.insert_pdf(fitz.open(f"Chumash{session}.pdf"))
                 elif option == 'Tanya':
-                    doc_out.insert_pdf(fitz.open(f"/home/mendy/ccscraper/dvarmalchus/Tanya{session}.pdf"))
+                    doc_out.insert_pdf(fitz.open(f"Tanya{session}.pdf"))
                 elif option == 'Rambam-Bilingual':
-                    doc.out.insert_pdf(fitz.open(f"/home/mendy/ccscraper/dvarmalchus/Rambam{session}.pdf")) #type: ignore
+                    doc.out.insert_pdf(fitz.open(f"Rambam{session}.pdf")) #type: ignore
                 continue
     else:
         for q in optconv:
@@ -246,7 +246,7 @@ def dynamicmake(dow, optconv, opt, source, session):
                 for i, item in enumerate(toc): #type: ignore
                     #print(item)
                     if item[1] == 'חומש לקריאה בציבור':
-                        pdf_file = open(f"/home/mendy/ccscraper/dvarmalchus/dvar{session}.pdf", "rb")
+                        pdf_file = open(f"dvar{session}.pdf", "rb")
                         pdf_reader = PyPDF2.PdfReader(pdf_file)
                         page_num_start = item[2] - 1
                         #print(page_num_start)
@@ -262,7 +262,7 @@ def dynamicmake(dow, optconv, opt, source, session):
                                 doc_out.insert_pdf(doc, from_page=page_num, to_page=page_num_end) #type: ignore
                                 continue
             elif q == 'Rambam-Bilingual':
-                doc_out.insert_pdf(fitz.open(f"/home/mendy/ccscraper/dvarmalchus/Rambam{session}.pdf")) 
+                doc_out.insert_pdf(fitz.open(f"Rambam{session}.pdf")) 
                 print("Appended")
                 continue
 
@@ -296,7 +296,7 @@ if submit_button:
     opttouse(opt, optconv)
     print(optconv)
     if source == True:
-        if os.path.exists(f"/home/mendy/ccscraper/dvarmalchus/dvar{session}.pdf") == False:
+        if os.path.exists(f"{session}.pdf") == False:
             try:
                 dvarget(session)
             except:
@@ -312,8 +312,8 @@ if submit_button:
 
     dynamicmake(dow, optconv, opt, source, session)
 
-    if os.path.exists(f"/home/mendy/ccscraper/dvarmalchus/output_dynamic{session}.pdf"):
-        with open(f"/home/mendy/ccscraper/dvarmalchus/output_dynamic{session}.pdf", "rb") as f:
+    if os.path.exists(f"output_dynamic{session}.pdf"):
+        with open(f"output_dynamic{session}.pdf", "rb") as f:
             st.download_button(label="Download", data=f, file_name="output_dynamic.pdf", mime="application/pdf")
 
 
