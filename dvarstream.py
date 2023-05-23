@@ -236,10 +236,8 @@ def rambamenglish(dor, session, opt):
             if "Rambam (3)-Bilingual" in opt:
                     lang = "both"
             elif "Rambam (3)-Hebrew" in opt:
-                st.write("Hebrew")
                 lang = "he"
             elif "Rambam (3)-English" in opt:
-                st.write("English")
                 lang = "primary"
             driver.get(f"https://www.chabad.org/dailystudy/rambam.asp?rambamchapters=3&tdate={i}#lt={lang}")
             wait = WebDriverWait(driver, 10)
