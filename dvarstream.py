@@ -230,7 +230,7 @@ def rambamenglish(dor, session):
     if os.path.exists(f"Rambam{session}.pdf") != True:
         for i in dor:
             #st.write(dor)
-            st.write("Rambam" + i)
+            #st.write("Rambam" + i)
             driver = webdriver.Chrome(options=options)
             driver.get(f"https://www.chabad.org/dailystudy/rambam.asp?rambamchapters=3&tdate={i}#lt=both")
             wait = WebDriverWait(driver, 10)
@@ -341,6 +341,7 @@ def dynamicmake(dow, optconv, opt, source, session):
             print("Chabad.org")
             print(opt)
             for option in opt:
+                st.write(option)
                 if option == 'Chumash':
                     doc_out.insert_pdf(fitz.open(f"Chumash{session}.pdf"))
                 elif option == 'Tanya':
