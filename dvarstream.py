@@ -291,6 +291,7 @@ def daytorambam(week, dor):
 
 def dynamicmake(dow, optconv, opt, source, session):
     output_dir = ""
+    toc = []
     try:
         doc = fitz.open(f"dvar{session}.pdf")
         toc = doc.get_toc()
