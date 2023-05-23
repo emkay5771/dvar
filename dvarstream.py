@@ -229,31 +229,28 @@ def rambamenglish(dor, session, opt):
     merger = PdfMerger()
     if os.path.exists(f"Rambam{session}.pdf") != True:
         for i in dor:
-            for option in opt:
-                #st.write(dor)
-                #st.write("Rambam" + i)
-                driver = webdriver.Chrome(options=options)
-                lang = ""
-                if option == "Rambam (3)-Bilingual":
-                        lang = "both"
-                elif option == "Rambam (3)-Hebrew":
-                    lang = "he"
-                elif option == "Rambam (3)-English":
-                    lang = "primary"
-                else:
-                    st.write("passing") 
-                    pass
-                st.write("getting rambam")
-                driver.get(f"https://www.chabad.org/dailystudy/rambam.asp?rambamchapters=3&tdate={i}#lt={lang}")
-                wait = WebDriverWait(driver, 10)
-                element = wait.until(EC.presence_of_element_located((By.ID, "content")))
-                pdf = driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
-                with open(f"temp{session}.pdf", "ab") as f:
-                    f.write(b64decode(pdf["data"]))
-                f.close()
-                driver.quit()
+            #st.write(dor)
+            #st.write("Rambam" + i)
+            driver = webdriver.Chrome(options=options)
+            lang = ""
+            if "Rambam (3)-Bilingual" in opt:
+                    lang = "both"
+            elif "Rambam (3)-Hebrew" in opt:
+                lang = "he"
+            elif "Rambam (3)-English" in opt:
+                lang = "primary"
+            else: 
+                pass
+            driver.get(f"https://www.chabad.org/dailystudy/rambam.asp?rambamchapters=3&tdate={i}#lt={lang}")
+            wait = WebDriverWait(driver, 10)
+            element = wait.until(EC.presence_of_element_located((By.ID, "content")))
+            pdf = driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
+            with open(f"temp{session}.pdf", "ab") as f:
+                f.write(b64decode(pdf["data"]))
+            f.close()
+            driver.quit()
 
-                merger.append(f"temp{session}.pdf")
+            merger.append(f"temp{session}.pdf")
 
         merger.write(f"Rambam{session}.pdf")
         merger.close()
