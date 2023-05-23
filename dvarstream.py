@@ -229,6 +229,7 @@ def rambamenglish(dor, session):
     merger = PdfMerger()
     if os.path.exists(f"Rambam{session}.pdf") != True:
         for i in dor:
+            st.write(dor)
             st.write("Rambam" + i)
             driver = webdriver.Chrome(options=options)
             driver.get(f"https://www.chabad.org/dailystudy/rambam.asp?rambamchapters=3&tdate={i}#lt=both")
@@ -257,6 +258,7 @@ def hayomyom(dor, session):
     merger3 = PdfMerger()
     if os.path.exists(f"Hayom{session}.pdf") != True:
         for i in dor:
+            st.write(dor)
             st.write(i)
             driver = webdriver.Chrome(options=options)
             driver.get(f"https://www.chabad.org/dailystudy/hayomyom.asp?tdate={i}")
