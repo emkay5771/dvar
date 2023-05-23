@@ -437,6 +437,7 @@ if submit_button:
 
     daytoheb(week, dow)
     opttouse(opt, optconv)
+    daytorambam(week, dor)
     print(optconv)
     if source == True:
         if os.path.exists(f"{session}.pdf") == False:
@@ -448,15 +449,12 @@ if submit_button:
                 source = False
     with st.spinner('Creating PDF...'):
         if source == False:
-            daytorambam(week, dor)
             chabadget(dor, opt, session)
 
         if 'Rambam (3)-Bilingual' in opt:
-            daytorambam(week, dor)
             rambamenglish(dor, session)
         
         if 'Hayom Yom' in opt:
-            daytorambam(week, dor)
             hayomyom(dor, session)
 
         dynamicmake(dow, optconv, opt, source, session)
