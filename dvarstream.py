@@ -343,7 +343,7 @@ def daytorambam(week, dor):
 def dynamicmake(dow, optconv, opt, source, session):
     output_dir = ""
     toc = []
-    st.write(optconv)
+    #st.write(optconv)
     if source == True:
         try:
             #st.write(f"opening dvar{session}.pdf")
@@ -482,8 +482,8 @@ if submit_button:
             rambamenglish(dor, session, opt)
         
         if 'Hayom Yom' in opt:
-            st.write(opt)
-            st.write(optconv)
+            #st.write(opt)
+            #st.write(optconv)
             hayomyom(dor, session)
 
         dynamicmake(dow, optconv, opt, source, session)
