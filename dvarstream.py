@@ -17,8 +17,8 @@ import glob
 
 #TODO: build streamlit ui
 
-st.set_page_config(page_title="Dvar Creator (ALPHA)", page_icon="📄", layout="wide", initial_sidebar_state="collapsed")
-st.title("Dvar Creator (ALPHA)")
+st.set_page_config(page_title="Dvar Creator (BETA)", page_icon="📚", layout="wide", initial_sidebar_state="collapsed")
+st.title("Dvar Creator 📚 (BETA)")
 
 options = webdriver.ChromeOptions()
 options.add_argument('--headless')
@@ -169,7 +169,6 @@ def dvarget(session):
 
     driver.quit()
 
-
 def chabadget(dor, opt, session):
     pdf_options = {
     'scale': 0.8,
@@ -294,17 +293,18 @@ def daytorambam(week, dor):
 def dynamicmake(dow, optconv, opt, source, session):
     output_dir = ""
     toc = []
-    try:
-        #st.write(f"opening dvar{session}.pdf")
-        doc = fitz.open(f"dvar{session}.pdf")
-        #st.write("opened dvar")
-        toc = doc.get_toc()
-        #st.write("got toc")
-    except:
-        st.write("Something went wrong with Dvar Malchus. Attempting to use Chabad.org.")
-        source = False
-        chabadget(dor, opt, session)
-        pass
+    if source == True:
+        try:
+            #st.write(f"opening dvar{session}.pdf")
+            doc = fitz.open(f"dvar{session}.pdf")
+            #st.write("opened dvar")
+            toc = doc.get_toc()
+            #st.write("got toc")
+        except:
+            st.write("Something went wrong with Dvar Malchus. Attempting to use Chabad.org.")
+            source = False
+            chabadget(dor, opt, session)
+            pass
     doc_out = fitz.open()
     #print(toc)
     if source == False:
@@ -377,13 +377,13 @@ def dynamicmake(dow, optconv, opt, source, session):
 
 
 with st.form(key="dvarform", clear_on_submit=False):
-    st.title("Printout Creator :book:")
-    st.write("(kind of broken-ish... but proof of concept)")
-    st.write("This app is designed to create a printout for the daily study of Chitas, Rambam, and Torah reading. It is designed to be used with the Dvar Malchus PDFs, but can also be used with Chabad.org.")
-    week = st.multiselect('Select the days of the week.', options=['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos'])
-    opt = st.multiselect('Select what materials you want.', options=['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Haftorah'])
+    st.title("Printout Creator")
+    st.write("(Work in progress... Bugs may occur.)")
+    st.write("This app is designed to create a printout for Chitas, Rambam, and Torah reading. It is currently designed to use both Dvar Malchus and Chabad.org as sources.")
+    week = st.multiselect('Select which days of the week you would like to print.', options=['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos'])
+    opt = st.multiselect('Select which materials you want.', options=['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Haftorah'])
     source = st.checkbox('Try to use Dvar Malchus, or get from Chabad.org? If checked, sources from Dvar Malchus will attempt to be used.', value=True)
-    submit_button = st.form_submit_button(label="Generate PDF")
+    submit_button = st.form_submit_button(label="Generate PDF ▶️")
 
 if submit_button:
     if id not in st.session_state:
@@ -420,8 +420,10 @@ if submit_button:
         dynamicmake(dow, optconv, opt, source, session)
 
     if os.path.exists(f"output_dynamic{session}.pdf"):
+        st.success("PDF created successfully!")
+        st.balloons()
         with open(f"output_dynamic{session}.pdf", "rb") as f:
-            st.download_button(label="Download", data=f, file_name="output_dynamic.pdf", mime="application/pdf")
+            st.download_button(label="Download ⬇️", data=f, file_name="output_dynamic.pdf", mime="application/pdf")
 
 
     if glob.glob("Rambam*.pdf"):
