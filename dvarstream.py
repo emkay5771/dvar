@@ -417,15 +417,15 @@ def dynamicmake(dow, optconv, opt, source, session):
                             if "ברכת הפטורה" in text or "xtd enk dxhtdd renyl" in text:
                                 doc_out.insert_pdf(doc, from_page=page_num, to_page=page_num_end) #type: ignore
                                 continue
-            if q == 'Rambam (3)-Bilingual':
-                st.write("Appending Rambam")
+            '''if q == 'Rambam (3)-Bilingual':
+                #st.write("Appending Rambam")
                 doc_out.insert_pdf(fitz.open(f"Rambam{session}.pdf")) 
                 print("Appended")
-                continue
+                continue'''
             
             if q == 'Hayom Yom':
                 print("Hayom Yom found")
-                st.write("Appending Hayom Yom")
+                #st.write("Appending Hayom Yom")
                 doc_out.insert_pdf(fitz.open(f"Hayom{session}.pdf")) 
                 print("Appended")
                 continue
