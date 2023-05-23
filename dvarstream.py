@@ -455,8 +455,7 @@ if submit_button:
     weekorder = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos']
     optorder = ['Chumash', 'Tanya', 
                 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 
-                'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 
-                'Hayom Yom', 'Haftorah'
+                'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom', 'Haftorah'
                 ]
     dow = []
     optconv = []
