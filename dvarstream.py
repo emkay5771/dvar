@@ -325,7 +325,7 @@ def opttouse(opt, optconv):
             optconv.append('רמב"ם - שלושה פרקים ליום')
         elif i == 'Haftorah':
             optconv.append('חומש לקריאה בציבור')
-        elif 'Ramabm' in i or 'Hayom Yom' in i or 'Hatforah' in i:
+        elif 'Rambam' in i or 'Hayom Yom' in i or 'Hatforah' in i:
             optconv.append(i)
     return optconv
         
