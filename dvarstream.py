@@ -236,6 +236,7 @@ def rambamenglish(dor, session, opt):
             if "Rambam (3)-Bilingual" in opt:
                     lang = "both"
             elif "Rambam (3)-Hebrew" in opt:
+                st.write("Hebrew")
                 lang = "he"
             elif "Rambam (3)-English" in opt:
                 st.write("English")
