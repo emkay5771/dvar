@@ -130,22 +130,27 @@ def dvarget(session):
     for each in xpaths:
         try:
             link_text = driver.find_element(By.XPATH, f"{each}/span/span[2]").text
+            st.write(link_text)
             if link_text == "להורדת החוברת השבועית" :
+                st.write(f"clicking {each}")
                 print(f"clicking {each}")
                 url = driver.find_element(By.XPATH, each).get_attribute("href")
                 driver.get(url)
                 break
             else:
                 if link_text != "להורדת החוברת השבועית - חו״ל":
+                    st.write("skipping " + each)
                     print("skipping " + each)
                     continue
                 elif link_text == "להורדת החוברת השבועית - חו״ל":
+                    st.write(f"clicking alternate {each}")
                     print(f"clicking alternate {each}")
                     url = driver.find_element(By.XPATH, each).get_attribute("href")
                     print(url)
                     driver.get(url)
                     break
         except:
+            st.write("exception")
             continue
 
 
