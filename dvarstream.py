@@ -233,15 +233,26 @@ def rambamenglish(dor, session, opt):
             #st.write("Rambam" + i)
             driver = webdriver.Chrome(options=options)
             lang = ""
+            chapters = ""
             if "Rambam (3)-Bilingual" in opt:
                     lang = "both"
+                    chapters = "3"
             elif "Rambam (3)-Hebrew" in opt:
                 lang = "he"
+                chapters = "3"
             elif "Rambam (3)-English" in opt:
                 lang = "primary"
-            else: 
-                pass
-            driver.get(f"https://www.chabad.org/dailystudy/rambam.asp?rambamchapters=3&tdate={i}#lt={lang}")
+                chapters = "3"
+            elif "Rambam (1)-Bilingual" in opt:
+                lang = "both"
+                chapters = "1"
+            elif "Rambam (1)-Hebrew" in opt:
+                lang = "he"
+                chapters = "1"
+            elif "Rambam (1)-English" in opt:
+                lang = "primary"
+                chapters = "1"
+            driver.get(f"https://www.chabad.org/dailystudy/rambam.asp?rambamchapters={chapters}&tdate={i}#lt={lang}")
             wait = WebDriverWait(driver, 10)
             element = wait.until(EC.presence_of_element_located((By.ID, "content")))
             pdf = driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
@@ -355,7 +366,7 @@ def dynamicmake(dow, optconv, opt, source, session):
                     doc_out.insert_pdf(fitz.open(f"Chumash{session}.pdf"))
                 elif option == 'Tanya':
                     doc_out.insert_pdf(fitz.open(f"Tanya{session}.pdf"))
-                elif option == 'Rambam (3)-Bilingual' or option == 'Rambam (3)-Hebrew' or option == 'Rambam (3)-English':
+                elif 'Rambam' in option:
                     doc_out.insert_pdf(fitz.open(f"Rambam{session}.pdf")) #type: ignore
                 elif option == 'Hayom Yom':
                     doc_out.insert_pdf(fitz.open(f"Hayom{session}.pdf"))
@@ -431,7 +442,7 @@ with st.form(key="dvarform", clear_on_submit=False):
     st.write("(Work in progress... Bugs may occur, and more options coming soon!)")
     st.write("This app is designed to create a printout for Chitas, Rambam, plus a few other things. It is currently designed to use both Dvar Malchus and Chabad.org as sources.")
     week = st.multiselect('Select which days of the week you would like to print.', options=['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos'])
-    opt = st.multiselect('Select which materials you want.', options=['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Hayom Yom', 'Haftorah'])
+    opt = st.multiselect('Select which materials you want.', options=['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English' 'Hayom Yom', 'Haftorah'])
     source = st.checkbox('Try to use Dvar Malchus, or get from Chabad.org? If checked, sources from Dvar Malchus will attempt to be used.', value=True)
     submit_button = st.form_submit_button(label="Generate PDF ▶️")
 
@@ -440,7 +451,11 @@ if submit_button:
         st.session_state['id'] = dt.now()
     session = st.session_state.id
     weekorder = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos']
-    optorder = ['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Hayom Yom', 'Haftorah']
+    optorder = ['Chumash', 'Tanya', 
+                'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 
+                'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English' 
+                'Hayom Yom', 'Haftorah'
+                ]
     dow = []
     optconv = []
     dor = []
