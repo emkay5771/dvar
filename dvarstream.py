@@ -345,7 +345,7 @@ def dynamicmake(dow, optconv, opt, source, session):
                     doc_out.insert_pdf(fitz.open(f"Rambam{session}.pdf")) #type: ignore
                 elif option == 'Hayom Yom':
                     doc_out.insert_pdf(fitz.open(f"Hayom{session}.pdf"))
-                continue
+                break
     else:
         for q in optconv:
             for z in dow:
