@@ -485,6 +485,7 @@ if submit_button:
             rambamenglish(dor, session, opt)
         
         if 'Hayom Yom' in opt:
+            st.write(opt)
             hayomyom(dor, session)
 
         dynamicmake(dow, optconv, opt, source, session)
