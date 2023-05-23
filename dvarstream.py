@@ -353,7 +353,7 @@ def dynamicmake(dow, optconv, opt, source, session):
                     doc_out.insert_pdf(fitz.open(f"Chumash{session}.pdf"))
                 elif option == 'Tanya':
                     doc_out.insert_pdf(fitz.open(f"Tanya{session}.pdf"))
-                elif option == 'Rambam (3)-Bilingual' or option == 'Rambam (3)-Hebrew' or option == 'Rambam (3)-English'':
+                elif option == 'Rambam (3)-Bilingual' or option == 'Rambam (3)-Hebrew' or option == 'Rambam (3)-English':
                     doc_out.insert_pdf(fitz.open(f"Rambam{session}.pdf")) #type: ignore
                 elif option == 'Hayom Yom':
                     doc_out.insert_pdf(fitz.open(f"Hayom{session}.pdf"))
