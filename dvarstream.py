@@ -218,7 +218,7 @@ def chabadget(dor, opt, session):
             #with open(f"Tanya{session}.pdf", "rb") as f:
           #      st.download_button(label="Download Tanya", data=f, file_name=f"Tanya{session}.pdf", mime="application/pdf")
 
-def rambamenglish(dor, session):
+def rambamenglish(dor, session, opt):
     pdf_options = {
     'scale': 0.48,
     'margin-top': '0.1in',
@@ -232,7 +232,14 @@ def rambamenglish(dor, session):
             #st.write(dor)
             #st.write("Rambam" + i)
             driver = webdriver.Chrome(options=options)
-            driver.get(f"https://www.chabad.org/dailystudy/rambam.asp?rambamchapters=3&tdate={i}#lt=both")
+            lang = ""
+            if "Rambam (3)-Bilingual" in opt:
+                    lang = "both"
+            elif "Rambam (3)-Hebrew" in opt:
+                lang = "he"
+            elif "Rambam (3)-English" in opt:
+                lang = "primary"
+            driver.get(f"https://www.chabad.org/dailystudy/rambam.asp?rambamchapters=3&tdate={i}#lt={lang}")
             wait = WebDriverWait(driver, 10)
             element = wait.until(EC.presence_of_element_located((By.ID, "content")))
             pdf = driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
@@ -422,7 +429,7 @@ with st.form(key="dvarform", clear_on_submit=False):
     st.write("(Work in progress... Bugs may occur, and more options coming soon!)")
     st.write("This app is designed to create a printout for Chitas, Rambam, plus a few other things. It is currently designed to use both Dvar Malchus and Chabad.org as sources.")
     week = st.multiselect('Select which days of the week you would like to print.', options=['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos'])
-    opt = st.multiselect('Select which materials you want.', options=['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Hayom Yom', 'Haftorah'])
+    opt = st.multiselect('Select which materials you want.', options=['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English' 'Hayom Yom', 'Haftorah'])
     source = st.checkbox('Try to use Dvar Malchus, or get from Chabad.org? If checked, sources from Dvar Malchus will attempt to be used.', value=True)
     submit_button = st.form_submit_button(label="Generate PDF ▶️")
 
@@ -431,7 +438,7 @@ if submit_button:
         st.session_state['id'] = dt.now()
     session = st.session_state.id
     weekorder = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos']
-    optorder = ['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Hayom Yom', 'Haftorah']
+    optorder = ['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)- English', 'Hayom Yom', 'Haftorah']
     dow = []
     optconv = []
     dor = []
@@ -453,9 +460,10 @@ if submit_button:
     with st.spinner('Creating PDF...'):
         if source == False:
             chabadget(dor, opt, session)
-
+            if 'Rambam (3)-Hebrew' in opt or 'Rambam (3)-Hebrew' in opt:
+                rambamenglish(dor, session, opt)
         if 'Rambam (3)-Bilingual' in opt:
-            rambamenglish(dor, session)
+            rambamenglish(dor, session, opt)
         
         if 'Hayom Yom' in opt:
             hayomyom(dor, session)
