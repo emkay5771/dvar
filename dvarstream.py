@@ -156,6 +156,7 @@ def dvarget(session):
 
     driver.save_screenshot("dvar.png")
     st.write("screenshot saved")
+    time.sleep(7)
     #download_wait("")
     os.remove("dvar.png")
     st.write("screenshot removed")
