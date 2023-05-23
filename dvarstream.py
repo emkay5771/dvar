@@ -276,7 +276,7 @@ def opttouse(opt, optconv):
             optconv.append('רמב"ם - שלושה פרקים ליום')
         elif i == 'Haftorah':
             optconv.append('חומש לקריאה בציבור')
-        elif i == ' Rambam (3)-Bilingual':
+        elif i == 'Rambam (3)-Bilingual':
             optconv.append(i)
     return optconv
         
@@ -315,7 +315,7 @@ def dynamicmake(dow, optconv, opt, source, session):
                     doc_out.insert_pdf(fitz.open(f"Chumash{session}.pdf"))
                 elif option == 'Tanya':
                     doc_out.insert_pdf(fitz.open(f"Tanya{session}.pdf"))
-                elif option == ' Rambam (3)-Bilingual':
+                elif option == 'Rambam (3)-Bilingual':
                     doc_out.insert_pdf(fitz.open(f"Rambam{session}.pdf")) #type: ignore
                 continue
     else:
@@ -361,7 +361,7 @@ def dynamicmake(dow, optconv, opt, source, session):
                             if "ברכת הפטורה" in text or "xtd enk dxhtdd renyl" in text:
                                 doc_out.insert_pdf(doc, from_page=page_num, to_page=page_num_end) #type: ignore
                                 continue
-            elif q == ' Rambam (3)-Bilingual':
+            elif q == 'Rambam (3)-Bilingual':
                 doc_out.insert_pdf(fitz.open(f"Rambam{session}.pdf")) 
                 print("Appended")
                 continue
@@ -378,7 +378,7 @@ with st.form(key="dvarform", clear_on_submit=False):
     st.write("(kind of broken-ish... but proof of concept)")
     st.write("This app is designed to create a printout for the daily study of Chitas, Rambam, and Torah reading. It is designed to be used with the Dvar Malchus PDFs, but can also be used with Chabad.org.")
     week = st.multiselect('Select the days of the week.', options=['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos'])
-    opt = st.multiselect('Select what materials you want.', options=['Chumash', 'Tanya', 'Rambam (3)-Hebrew', ' Rambam (3)-Bilingual', 'Haftorah'])
+    opt = st.multiselect('Select what materials you want.', options=['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Haftorah'])
     source = st.checkbox('Try to use Dvar Malchus, or get from Chabad.org? If checked, sources from Dvar Malchus will attempt to be used.', value=True)
     submit_button = st.form_submit_button(label="Generate PDF")
 
@@ -410,7 +410,7 @@ if submit_button:
             daytorambam(week, dor)
             chabadget(dor, opt, session)
 
-        if ' Rambam (3)-Bilingual' in opt:
+        if 'Rambam (3)-Bilingual' in opt:
             daytorambam(week, dor)
             rambamenglish(dor, session)
 
