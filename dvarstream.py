@@ -259,7 +259,7 @@ def hayomyom(dor, session):
     if os.path.exists(f"Hayom{session}.pdf") != True:
         for i in dor:
             #st.write(dor)
-            st.write(i)
+            #st.write(i)
             driver = webdriver.Chrome(options=options)
             driver.get(f"https://www.chabad.org/dailystudy/hayomyom.asp?tdate={i}")
             wait = WebDriverWait(driver, 10)
@@ -439,7 +439,7 @@ if submit_button:
     dor = []
     week = sorted(week, key=weekorder.index)
     opt = sorted(opt, key=optorder.index)
-
+    st.write(opt)
     daytoheb(week, dow)
     opttouse(opt, optconv)
     daytorambam(week, dor)
