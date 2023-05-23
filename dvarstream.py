@@ -460,6 +460,7 @@ if submit_button:
     dor = []
     week = sorted(week, key=weekorder.index)
     opt = sorted(opt, key=optorder.index)
+    optconv = sorted(opt, key=optorder.index)
     #st.write(opt)
     daytoheb(week, dow)
     opttouse(opt, optconv)
