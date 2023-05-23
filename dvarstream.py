@@ -130,36 +130,36 @@ def dvarget(session):
     for each in xpaths:
         try:
             link_text = driver.find_element(By.XPATH, f"{each}/span/span[2]").text
-            st.write(link_text)
+            #st.write(link_text)
             if link_text == "להורדת החוברת השבועית" :
-                st.write(f"clicking {each}")
+                #st.write(f"clicking {each}")
                 print(f"clicking {each}")
                 url = driver.find_element(By.XPATH, each).get_attribute("href")
                 driver.get(url)
                 break
             else:
                 if link_text != "להורדת החוברת השבועית - חו״ל":
-                    st.write("skipping " + each)
+                    #st.write("skipping " + each)
                     print("skipping " + each)
                     continue
                 elif link_text == "להורדת החוברת השבועית - חו״ל":
-                    st.write(f"clicking alternate {each}")
+                    #st.write(f"clicking alternate {each}")
                     print(f"clicking alternate {each}")
                     url = driver.find_element(By.XPATH, each).get_attribute("href")
                     print(url)
                     driver.get(url)
                     break
         except:
-            st.write("exception")
+            #st.write("exception")
             continue
 
 
     driver.save_screenshot("dvar.png")
-    st.write("screenshot saved")
-    time.sleep(7)
-    #download_wait("")
+    #st.write("screenshot saved")
+    with st.spinner("Downloading Dvar Malchus..."):
+        time.sleep(7)
     os.remove("dvar.png")
-    st.write("screenshot removed")
+    #st.write("screenshot removed")
 
     files = os.listdir()
     sessionyear = "2023"  # set the session variable to "2023"
@@ -294,16 +294,18 @@ def dynamicmake(dow, optconv, opt, source, session):
     output_dir = ""
     toc = []
     try:
-        st.write(f"opening dvar{session}.pdf")
+        #st.write(f"opening dvar{session}.pdf")
         doc = fitz.open(f"dvar{session}.pdf")
-        st.write("opened dvar")
+        #st.write("opened dvar")
         toc = doc.get_toc()
-        st.write("got toc")
+        #st.write("got toc")
     except:
-        st.write("something went wrong")
+        st.write("Something went wrong with Dvar Malchus. Attempting to use Chabad.org.")
+        source = False
+        chabadget(dor, opt, session)
         pass
     doc_out = fitz.open()
-    '''print(toc)'''
+    #print(toc)
     if source == False:
             print("Chabad.org")
             print(opt)
