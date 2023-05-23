@@ -462,7 +462,7 @@ if submit_button:
     with st.spinner('Creating PDF...'):
         if source == False:
             chabadget(dor, opt, session)
-            if 'Rambam (3)-Hebrew' in opt or 'Rambam (3)-Hebrew' in opt:
+            if 'Rambam (3)-Hebrew' in opt or 'Rambam (3)-English' in opt:
                 rambamenglish(dor, session, opt)
         if 'Rambam (3)-Bilingual' in opt:
             rambamenglish(dor, session, opt)
