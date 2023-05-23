@@ -347,10 +347,8 @@ def dynamicmake(dow, optconv, opt, source, session):
                 elif option == 'Tanya':
                     doc_out.insert_pdf(fitz.open(f"Tanya{session}.pdf"))
                 elif option == 'Rambam (3)-Bilingual':
-                    st.write("Rambam")
                     doc_out.insert_pdf(fitz.open(f"Rambam{session}.pdf")) #type: ignore
                 elif option == 'Hayom Yom':
-                    st.write("Hayom Yom")
                     doc_out.insert_pdf(fitz.open(f"Hayom{session}.pdf"))
                 
     else:
@@ -439,7 +437,7 @@ if submit_button:
     dor = []
     week = sorted(week, key=weekorder.index)
     opt = sorted(opt, key=optorder.index)
-    st.write(opt)
+    #st.write(opt)
     daytoheb(week, dow)
     opttouse(opt, optconv)
     daytorambam(week, dor)
