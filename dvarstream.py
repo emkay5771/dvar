@@ -293,9 +293,13 @@ def dynamicmake(dow, optconv, opt, source, session):
     output_dir = ""
     toc = []
     try:
+        st.write(f"opening dvar{session}.pdf")
         doc = fitz.open(f"dvar{session}.pdf")
+        st.write("opened dvar")
         toc = doc.get_toc()
+        st.write("got toc")
     except:
+        st.write("something went wrong")
         pass
     doc_out = fitz.open()
     '''print(toc)'''
