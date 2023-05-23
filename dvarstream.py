@@ -15,8 +15,6 @@ import PyPDF2 #type: ignore
 from PyPDF2 import PdfMerger #type: ignore
 import glob
 
-#TODO: build streamlit ui
-
 st.set_page_config(page_title="Dvar Creator (BETA)", page_icon="📚", layout="wide", initial_sidebar_state="collapsed")
 st.title("Dvar Creator 📚 (BETA)")
 
@@ -247,6 +245,34 @@ def rambamenglish(dor, session):
         merger.close()
         os.remove(f"temp{session}.pdf")
 
+def hayomyom(dor, session):
+    pdf_options = {
+    'scale': 0.48,
+    'margin-top': '0.1in',
+    'margin-right': '0.1in',
+    'margin-bottom': '0.1in',
+    'margin-left': '0.1in',
+    }
+    merger3 = PdfMerger()
+    if os.path.exists(f"Hayom{session}.pdf") != True:
+        for i in dor:
+            driver = webdriver.Chrome(options=options)
+            driver.get(f"https://www.chabad.org/dailystudy/hayomyom.asp?tdate={i}")
+            wait = WebDriverWait(driver, 10)
+            element = wait.until(EC.presence_of_element_located((By.ID, "content")))
+            pdf = driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
+            with open(f"temp{session}.pdf", "ab") as f:
+                f.write(b64decode(pdf["data"]))
+            f.close()
+            driver.quit()
+
+            merger3.append(f"temp{session}.pdf")
+
+        merger3.write(f"Hayom{session}.pdf")
+        merger3.close()
+        os.remove(f"temp{session}.pdf")
+
+
 def daytoheb(week, dow):
     for i in week:
         if i == 'Sunday':
@@ -364,8 +390,13 @@ def dynamicmake(dow, optconv, opt, source, session):
                             if "ברכת הפטורה" in text or "xtd enk dxhtdd renyl" in text:
                                 doc_out.insert_pdf(doc, from_page=page_num, to_page=page_num_end) #type: ignore
                                 continue
-            elif q == 'Rambam (3)-Bilingual':
+            if q == 'Rambam (3)-Bilingual':
                 doc_out.insert_pdf(fitz.open(f"Rambam{session}.pdf")) 
+                print("Appended")
+                continue
+            if q == 'Hayom Yom':
+                print("Hayom Yom found")
+                doc_out.insert_pdf(fitz.open(f"Hayom{session}.pdf")) 
                 print("Appended")
                 continue
 
@@ -381,7 +412,7 @@ with st.form(key="dvarform", clear_on_submit=False):
     st.write("(Work in progress... Bugs may occur.)")
     st.write("This app is designed to create a printout for Chitas, Rambam, and Torah reading. It is currently designed to use both Dvar Malchus and Chabad.org as sources.")
     week = st.multiselect('Select which days of the week you would like to print.', options=['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos'])
-    opt = st.multiselect('Select which materials you want.', options=['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Haftorah'])
+    opt = st.multiselect('Select which materials you want.', options=['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Hayom Yom', 'Haftorah'])
     source = st.checkbox('Try to use Dvar Malchus, or get from Chabad.org? If checked, sources from Dvar Malchus will attempt to be used.', value=True)
     submit_button = st.form_submit_button(label="Generate PDF ▶️")
 
@@ -390,7 +421,7 @@ if submit_button:
         st.session_state['id'] = dt.now()
     session = st.session_state.id
     weekorder = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos']
-    optorder = ['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Haftorah']
+    optorder = ['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Hayom Yom', 'Haftorah']
     dow = []
     optconv = []
     dor = []
@@ -416,6 +447,10 @@ if submit_button:
         if 'Rambam (3)-Bilingual' in opt:
             daytorambam(week, dor)
             rambamenglish(dor, session)
+        
+        if 'Hayom Yom' in opt:
+            daytorambam(week, dor)
+            hayomyom(dor, session)
 
         dynamicmake(dow, optconv, opt, source, session)
 
