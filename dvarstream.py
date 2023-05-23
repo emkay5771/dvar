@@ -155,8 +155,10 @@ def dvarget(session):
 
 
     driver.save_screenshot("dvar.png")
+    st.write("screenshot saved")
     download_wait("")
     os.remove("dvar.png")
+    st.write("screenshot removed")
 
     files = os.listdir()
     sessionyear = "2023"  # set the session variable to "2023"
