@@ -382,10 +382,13 @@ if submit_button:
     opttouse(opt, optconv)
     print(optconv)
     if source == True:
+        st.write("Attempting to use Dvar Malchus...")
         if os.path.exists(f"{session}.pdf") == False:
             try:
+                st.write("Downloading Dvar Malchus...")
                 dvarget(session)
             except:
+                st.write("Dvar Malchus not found. Using Chabad.org...")
                 source = False
 
     if source == False:
