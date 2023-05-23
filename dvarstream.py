@@ -229,7 +229,7 @@ def rambamenglish(dor, session):
     merger = PdfMerger()
     if os.path.exists(f"Rambam{session}.pdf") != True:
         for i in dor:
-            st.write(dor)
+            #st.write(dor)
             st.write("Rambam" + i)
             driver = webdriver.Chrome(options=options)
             driver.get(f"https://www.chabad.org/dailystudy/rambam.asp?rambamchapters=3&tdate={i}#lt=both")
@@ -258,7 +258,7 @@ def hayomyom(dor, session):
     merger3 = PdfMerger()
     if os.path.exists(f"Hayom{session}.pdf") != True:
         for i in dor:
-            st.write(dor)
+            #st.write(dor)
             st.write(i)
             driver = webdriver.Chrome(options=options)
             driver.get(f"https://www.chabad.org/dailystudy/hayomyom.asp?tdate={i}")
@@ -346,8 +346,10 @@ def dynamicmake(dow, optconv, opt, source, session):
                 elif option == 'Tanya':
                     doc_out.insert_pdf(fitz.open(f"Tanya{session}.pdf"))
                 elif option == 'Rambam (3)-Bilingual':
+                    st.write("Rambam")
                     doc_out.insert_pdf(fitz.open(f"Rambam{session}.pdf")) #type: ignore
                 elif option == 'Hayom Yom':
+                    st.write("Hayom Yom")
                     doc_out.insert_pdf(fitz.open(f"Hayom{session}.pdf"))
                 break
     else:
