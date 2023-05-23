@@ -486,6 +486,7 @@ if submit_button:
         
         if 'Hayom Yom' in opt:
             st.write(opt)
+            st.write(optconv)
             hayomyom(dor, session)
 
         dynamicmake(dow, optconv, opt, source, session)
