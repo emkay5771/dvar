@@ -372,7 +372,9 @@ def dynamicmake(dow, optconv, opt, source, session):
                     doc_out.insert_pdf(fitz.open(f"Hayom{session}.pdf"))
                 
     else:
+        st.write(optconv)
         for q in optconv:
+            st.write(q)
             for z in dow:
                 for i, top_level in enumerate(toc): #type: ignore
                     if not top_level[2]:
@@ -417,11 +419,11 @@ def dynamicmake(dow, optconv, opt, source, session):
                             if "ברכת הפטורה" in text or "xtd enk dxhtdd renyl" in text:
                                 doc_out.insert_pdf(doc, from_page=page_num, to_page=page_num_end) #type: ignore
                                 continue
-            '''if q == 'Rambam (3)-Bilingual':
+            if q == 'Rambam (3)-Bilingual':
                 #st.write("Appending Rambam")
                 doc_out.insert_pdf(fitz.open(f"Rambam{session}.pdf")) 
                 print("Appended")
-                continue'''
+                continue
             
             if q == 'Hayom Yom':
                 print("Hayom Yom found")
