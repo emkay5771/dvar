@@ -331,6 +331,8 @@ def dynamicmake(dow, optconv, opt, source, session):
                             if z in sub_level[1]:
                                 start_page = sub_level[2] - 1
                                 if top_level[1] == "חומש יומי":
+                                    if z == 'שבת קודש':
+                                        end_page = toc[j+1][2] - 3
                                     end_page = toc[j+1][2] - 1 #type: ignore
                                     print("Chumash found")
                                 if top_level[1] == "תניא יומי":
