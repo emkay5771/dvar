@@ -46,7 +46,7 @@ def download_wait(path_to_downloads):
         seconds += 1
     return seconds   
 
-def dvarget(session):
+def dvarget2(session):
     driver = webdriver.Chrome(options=options)
     driver.get("https://dvarmalchus.org")
     for each in ["/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div/div/div",
@@ -79,6 +79,89 @@ def dvarget(session):
 
 
     driver.quit()
+
+def dvarget3(session):
+    driver = webdriver.Chrome(options=options)
+    driver.get("https://dvarmalchus.org")
+    for each in ["/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div/div/div",
+                 "/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div[1]/div/div/a",
+                "/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div[2]/div/div/a/span/span[2]",
+                '/html/body/div[1]/section[9]/div/div/div/div[3]/div/div/div/div[1]/div/section/div/div/div/section/div/div/div/div/div/div/a/span/span[2]',
+                '/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div[2]/div/div/a']:
+        button = driver.find_element(By.XPATH, each)
+        if button.text == "להורדת החוברת השבועית":
+            print("clicking regular" + each)
+            url = button.get_attribute("href")
+            driver.get(url)
+        else:
+            if button.text != "להורדת החוברת השבועית - חו״ל":
+                print("skipping " + each)
+                continue
+            elif button.text == "להורדת החוברת השבועית - חו״ל":
+                print("clicking alternate" + each)
+                url = button.get_attribute("href")
+                driver.get(url)
+                break
+
+    # driver.save_screenshot("dvar.png")
+    #download_wait("")
+    # os.remove("dvar.png")
+
+    files = os.listdir()
+    sessionyear = "2023"  # set the session variable to "2023"
+    for file in files:
+        if file.endswith(".pdf") and sessionyear not in file:  # check if the file is a pdf and does not contain the session variable
+            print("renaming " + file)
+            os.rename(os.path.join("", file), os.path.join("", f"dvar{session}.pdf"))
+
+    driver.quit()
+
+def dvarget(session):
+    driver = webdriver.Chrome(options=options)
+    driver.get("https://dvarmalchus.org")
+    xpaths = [
+        "/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div/div/div",
+        '/html/body/div[1]/section[2]/div[3]/div/div/div[3]/div/div/a',
+        '/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div[1]/div/div/a',
+        "/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div[2]/div/div/a",
+        '/html/body/div[1]/section[9]/div/div/div/div[3]/div/div/div/div[1]/div/section/div/div/div/section/div/div/div/div/div/div/a',
+        '/html/body/div[1]/section[9]/div/div/div/div[3]/div/div/div/div[2]/div/section/div/div/div/section/div/div/div/div/div/div/a'
+    ]
+    for each in xpaths:
+        try:
+            link_text = driver.find_element(By.XPATH, f"{each}/span/span[2]").text
+            if link_text == "להורדת החוברת השבועית" :
+                print(f"clicking {each}")
+                url = driver.find_element(By.XPATH, each).get_attribute("href")
+                driver.get(url)
+                break
+            else:
+                if link_text != "להורדת החוברת השבועית - חו״ל":
+                    print("skipping " + each)
+                    continue
+                elif link_text == "להורדת החוברת השבועית - חו״ל":
+                    print(f"clicking alternate {each}")
+                    url = driver.find_element(By.XPATH, each).get_attribute("href")
+                    print(url)
+                    driver.get(url)
+                    break
+        except:
+            continue
+
+
+    driver.save_screenshot("dvar.png")
+    download_wait("")
+    os.remove("dvar.png")
+
+    files = os.listdir()
+    sessionyear = "2023"  # set the session variable to "2023"
+    for file in files:
+        if file.endswith(".pdf") and sessionyear not in file:  # check if the file is a pdf and does not contain the session variable
+            print("renaming " + file)
+            os.rename(os.path.join("", file), os.path.join("", f"dvar{session}.pdf"))
+
+    driver.quit()
+
 
 def chabadget(dor, opt, session):
     pdf_options = {
