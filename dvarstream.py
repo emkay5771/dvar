@@ -343,6 +343,7 @@ def daytorambam(week, dor):
 def dynamicmake(dow, optconv, opt, source, session):
     output_dir = ""
     toc = []
+    st.write(optconv)
     if source == True:
         try:
             #st.write(f"opening dvar{session}.pdf")
