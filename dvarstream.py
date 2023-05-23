@@ -156,8 +156,7 @@ def dvarget(session):
 
     driver.save_screenshot("dvar.png")
     #st.write("screenshot saved")
-    with st.spinner("Downloading Dvar Malchus..."):
-        time.sleep(7)
+    time.sleep(7)
     os.remove("dvar.png")
     #st.write("screenshot removed")
 
@@ -196,7 +195,8 @@ def chabadget(dor, opt, session):
 
             merger.write(f"Chumash{session}.pdf")
             merger.close()
-            os.remove(f"temp{session}.pdf")
+            if os.path.exists(f"temp{session}.pdf"):
+                os.remove(f"temp{session}.pdf")
     if os.path.exists(f"Tanya{session}.pdf") != True:
         merger2 = PdfMerger()
         if 'Tanya' in opt:
@@ -215,8 +215,9 @@ def chabadget(dor, opt, session):
 
             merger2.write(f"Tanya{session}.pdf")
             merger2.close()
-            os.remove(f"temp{session}.pdf")
-            driver.quit() #type: ignore
+            if os.path.exists(f"temp{session}.pdf"):
+                os.remove(f"temp{session}.pdf")
+            
             #with open(f"Tanya{session}.pdf", "rb") as f:
           #      st.download_button(label="Download Tanya", data=f, file_name=f"Tanya{session}.pdf", mime="application/pdf")
 
@@ -386,7 +387,7 @@ if submit_button:
         st.session_state['id'] = dt.now()
     session = st.session_state.id
     weekorder = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos']
-    optorder = ['Chumash', 'Tanya', 'Rambam-Hebrew', 'Rambam-Bilingual', 'Haftorah']
+    optorder = ['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Haftorah']
     dow = []
     optconv = []
     dor = []
@@ -397,24 +398,23 @@ if submit_button:
     opttouse(opt, optconv)
     print(optconv)
     if source == True:
-        st.write("Attempting to use Dvar Malchus...")
         if os.path.exists(f"{session}.pdf") == False:
             try:
-                st.write("Downloading Dvar Malchus...")
-                dvarget(session)
+                with st.spinner('Attempting to download Dvar Malchus...'):
+                    dvarget(session)
             except:
                 st.write("Dvar Malchus not found. Using Chabad.org...")
                 source = False
+    with st.spinner('Creating PDF...'):
+        if source == False:
+            daytorambam(week, dor)
+            chabadget(dor, opt, session)
 
-    if source == False:
-        daytorambam(week, dor)
-        chabadget(dor, opt, session)
+        if 'Rambam-Bilingual' in opt:
+            daytorambam(week, dor)
+            rambamenglish(dor, session)
 
-    if 'Rambam-Bilingual' in opt:
-        daytorambam(week, dor)
-        rambamenglish(dor, session)
-
-    dynamicmake(dow, optconv, opt, source, session)
+        dynamicmake(dow, optconv, opt, source, session)
 
     if os.path.exists(f"output_dynamic{session}.pdf"):
         with open(f"output_dynamic{session}.pdf", "rb") as f:
