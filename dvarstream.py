@@ -318,14 +318,14 @@ def daytoheb(week, dow):
 def opttouse(opt, optconv):
     for i in opt:
         if i == 'Chumash':
-            optconv.append('חומש יומי')
+            optconv.insert(0, 'חומש יומי')
         elif i == 'Tanya':
-            optconv.append('תניא יומי')
+            optconv.insert(0, 'תניא יומי')
         elif i == 'Rambam (3)-Hebrew':
-            optconv.append('רמב"ם - שלושה פרקים ליום')
+            optconv.insert(0, 'רמב"ם - שלושה פרקים ליום')
         elif i == 'Haftorah':
-            optconv.append('חומש לקריאה בציבור')
-        elif i == 'Rambam (3)-Bilingual':
+            optconv.insert(0, 'חומש לקריאה בציבור')
+        elif 'Ramabm' in i or 'Hayom Yom' in i or 'Hatforah' in i:
             optconv.append(i)
     return optconv
         
@@ -460,7 +460,6 @@ if submit_button:
     dor = []
     week = sorted(week, key=weekorder.index)
     opt = sorted(opt, key=optorder.index)
-    optconv = sorted(opt, key=optorder.index)
     #st.write(opt)
     daytoheb(week, dow)
     opttouse(opt, optconv)
