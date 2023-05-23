@@ -199,7 +199,7 @@ def chabadget(dor, opt, session):
         if 'Tanya' in opt:
             for i in dor:
                 driver = webdriver.Chrome(options=options)
-                driver.get(f"https://www.chabad.org/dailystudy/tanya.asp?date={i}&commentary=false#lt=he")
+                driver.get(f"https://www.chabad.org/dailystudy/tanya.asp?tdate={i}&commentary=false#lt=he")
                 wait = WebDriverWait(driver, 10)
                 element = wait.until(EC.presence_of_element_located((By.ID, "content")))
                 time.sleep(3)
@@ -341,7 +341,7 @@ def dynamicmake(dow, optconv, opt, source, session):
             print("Chabad.org")
             print(opt)
             for option in opt:
-                st.write(option)
+                #st.write(option)
                 if option == 'Chumash':
                     doc_out.insert_pdf(fitz.open(f"Chumash{session}.pdf"))
                 elif option == 'Tanya':
@@ -398,14 +398,14 @@ def dynamicmake(dow, optconv, opt, source, session):
                                 doc_out.insert_pdf(doc, from_page=page_num, to_page=page_num_end) #type: ignore
                                 continue
             if q == 'Rambam (3)-Bilingual':
-                st.write("Appending Rambam")
+                #st.write("Appending Rambam")
                 doc_out.insert_pdf(fitz.open(f"Rambam{session}.pdf")) 
                 print("Appended")
                 continue
             
             if q == 'Hayom Yom':
                 print("Hayom Yom found")
-                st.write("Appending Hayom Yom")
+                #st.write("Appending Hayom Yom")
                 doc_out.insert_pdf(fitz.open(f"Hayom{session}.pdf")) 
                 print("Appended")
                 continue
