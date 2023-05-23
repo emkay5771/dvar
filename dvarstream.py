@@ -373,9 +373,9 @@ def dynamicmake(dow, optconv, opt, source, session):
                     doc_out.insert_pdf(fitz.open(f"Hayom{session}.pdf"))
                 
     else:
-        st.write(optconv)
+        #st.write(optconv)
         for q in optconv:
-            st.write(q)
+            #st.write(q)
             for z in dow:
                 for i, top_level in enumerate(toc): #type: ignore
                     if not top_level[2]:
