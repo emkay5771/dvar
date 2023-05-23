@@ -4,7 +4,7 @@ from selenium.webdriver.support.ui import WebDriverWait #type: ignore
 from selenium.webdriver.support import expected_conditions as EC #type: ignore
 import os
 import time
-import fitz #type: ignore
+import fitz as fitz #type: ignore
 from base64 import b64decode
 from dateutil.relativedelta import relativedelta #type: ignore
 from datetime import date #type: ignore
@@ -394,6 +394,7 @@ def dynamicmake(dow, optconv, opt, source, session):
                 doc_out.insert_pdf(fitz.open(f"Rambam{session}.pdf")) 
                 print("Appended")
                 continue
+            
             if q == 'Hayom Yom':
                 print("Hayom Yom found")
                 doc_out.insert_pdf(fitz.open(f"Hayom{session}.pdf")) 
