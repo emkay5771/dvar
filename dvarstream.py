@@ -419,8 +419,8 @@ def dynamicmake(dow, optconv, opt, source, session):
 
 with st.form(key="dvarform", clear_on_submit=False):
     st.title("Printout Creator")
-    st.write("(Work in progress... Bugs may occur.)")
-    st.write("This app is designed to create a printout for Chitas, Rambam, and Torah reading. It is currently designed to use both Dvar Malchus and Chabad.org as sources.")
+    st.write("(Work in progress... Bugs may occur, and more options coming soon!)")
+    st.write("This app is designed to create a printout for Chitas, Rambam, plus a few other things. It is currently designed to use both Dvar Malchus and Chabad.org as sources.")
     week = st.multiselect('Select which days of the week you would like to print.', options=['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos'])
     opt = st.multiselect('Select which materials you want.', options=['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Hayom Yom', 'Haftorah'])
     source = st.checkbox('Try to use Dvar Malchus, or get from Chabad.org? If checked, sources from Dvar Malchus will attempt to be used.', value=True)
