@@ -432,11 +432,12 @@ if submit_button:
         st.write(opt)
         if source == False:
             chabadget(dor, opt, session)
-            if 'Rambam (3)-Hebrew' in opt or 'Rambam (3)-English' in opt or 'Rambam (1)-Bilingual' in opt or 'Rambam (1)-English' in opt or 'Rambam (1)-Hebrew' in opt:
+            if 'Rambam (3)-Hebrew' in opt or 'Rambam (3)-Bilingual' in opt or 'Rambam (3)-English' in opt or 'Rambam (1)-Bilingual' in opt or 'Rambam (1)-English' in opt or 'Rambam (1)-Hebrew' in opt:
                 rambamenglish(dor, session, opt)
-        if 'Rambam' in opt:
-            st.write("getting rambam")
-            rambamenglish(dor, session, opt)
+        if source == True:
+            if 'Rambam (3)-Bilingual' in opt or 'Rambam (3)-English' in opt or 'Rambam (1)-Bilingual' in opt or 'Rambam (1)-English' in opt or 'Rambam (1)-Hebrew' in opt:
+                st.write("getting rambam")
+                rambamenglish(dor, session, opt)
         
         if 'Hayom Yom' in opt:
             #st.write(opt)
