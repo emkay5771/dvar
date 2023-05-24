@@ -494,6 +494,7 @@ if submit_button:
         else:
             st.write("Dvar Malchus not needed. Using Chabad.org...")
             source = False
+            cover = False
     with st.spinner('Creating PDF...'):
         if source == False:
             chabadget(dor, opt, session)
