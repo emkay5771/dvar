@@ -170,7 +170,7 @@ def dvarget(session):
 
 def chabadget(dor, opt, session):
     pdf_options = {
-    'scale': [scale],
+    'scale': scale,
     'margin-top': '0.1in',
     'margin-right': '0.1in',
     'margin-bottom': '0.1in',
@@ -271,7 +271,7 @@ def rambamenglish(dor, session, opt):
 
 def hayomyom(dor, session):
     pdf_options = {
-    'scale': [scale],
+    'scale': scale,
     'margin-top': '0.1in',
     'margin-right': '0.1in',
     'margin-bottom': '0.1in',
@@ -456,8 +456,8 @@ with st.form(key="dvarform", clear_on_submit=False):
         cover = st.checkbox('Include the cover page from Dvar Malchus?', value=False)
         scaleslide = st.slider('Change the scale of the PDFs from Chabad.org. Default is 100%.', 30, 100, 100)
         st.write("Scale is", scaleslide,"%")
-        scales = scaleslide/100
-        scale = [scales]
+        scale = scaleslide/100
+        #scale = [scales]
 
     submit_button = st.form_submit_button(label="Generate PDF ▶️")
 
