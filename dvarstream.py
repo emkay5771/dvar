@@ -170,7 +170,7 @@ def dvarget(session):
 
 def chabadget(dor, opt, session):
     pdf_options = {
-    'scale': {scale},
+    'scale': [scale],
     'margin-top': '0.1in',
     'margin-right': '0.1in',
     'margin-bottom': '0.1in',
@@ -271,7 +271,7 @@ def rambamenglish(dor, session, opt):
 
 def hayomyom(dor, session):
     pdf_options = {
-    'scale': {scale},
+    'scale': [scale],
     'margin-top': '0.1in',
     'margin-right': '0.1in',
     'margin-bottom': '0.1in',
