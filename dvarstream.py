@@ -261,7 +261,7 @@ def opttouse(opt, optconv):
             optconv.append('חומש לקריאה בציבור')
         elif 'Rambam' in i or 'Hayom Yom' in i or 'Hatforah' in i:
             optconv.append(i)
-    st.write(optconv)
+    #st.write(optconv)
     return optconv
         
 def daytorambam(week, dor):
@@ -436,7 +436,7 @@ if submit_button:
                 rambamenglish(dor, session, opt)
         if source == True:
             if 'Rambam (3)-Bilingual' in opt or 'Rambam (3)-English' in opt or 'Rambam (1)-Bilingual' in opt or 'Rambam (1)-English' in opt or 'Rambam (1)-Hebrew' in opt:
-                st.write("getting rambam")
+                #st.write("getting rambam")
                 rambamenglish(dor, session, opt)
         
         if 'Hayom Yom' in opt:
