@@ -175,6 +175,7 @@ def chabadget(dor, opt, session):
     'margin-bottom': '0.1in',
     'margin-left': '0.1in',
     }
+    st.write(f"{scale}")
     if os.path.exists(f"Chumash{session}.pdf") != True:
         merger = PdfMerger()
         if 'Chumash' in opt:
@@ -374,6 +375,8 @@ def dynamicmake(dow, optconv, opt, source, session):
                 
     else:
         #st.write(optconv)
+        if cover == True:
+            doc_out.insert_pdf(doc, from_page=0, to_page=0)
         for q in optconv:
             #st.write(q)
             for z in dow:
@@ -448,9 +451,10 @@ with st.form(key="dvarform", clear_on_submit=False):
     opt = st.multiselect('Select which materials you want.', options=['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom', 'Haftorah'])
     source = st.checkbox('Try to use Dvar Malchus, or get from Chabad.org? If checked, sources from Dvar Malchus will attempt to be used.', value=True)
     with st.expander("Advanced Options"):
+        cover = st.checkbox('Include the cover page from Dvar Malchus?', value=False)
         scaleslide = st.slider('Change the scale of the PDFs from Chabad.org. Default is 100%.', 30, 100, 100)
-        scale = scaleslide/100
         st.write("Scale is", scaleslide,"%")
+        scale = scaleslide/100
 
     submit_button = st.form_submit_button(label="Generate PDF ▶️")
 
