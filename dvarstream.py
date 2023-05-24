@@ -457,7 +457,7 @@ with st.form(key="dvarform", clear_on_submit=False):
         scaleslide = st.slider('Change the scale of the PDFs from Chabad.org. Default is 100%.', 30, 100, 100)
         st.write("Scale is", scaleslide,"%")
         scales = scaleslide/100
-        scale = str(scales)
+        scale = [scales]
 
     submit_button = st.form_submit_button(label="Generate PDF ▶️")
 
