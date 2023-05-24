@@ -169,7 +169,7 @@ def dvarget(session):
 
 def chabadget(dor, opt, session):
     pdf_options = {
-    'scale': 0.8,
+    'scale': {scale},
     'margin-top': '0.1in',
     'margin-right': '0.1in',
     'margin-bottom': '0.1in',
@@ -447,6 +447,11 @@ with st.form(key="dvarform", clear_on_submit=False):
     week = st.multiselect('Select which days of the week you would like to print.', options=['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos'])
     opt = st.multiselect('Select which materials you want.', options=['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom', 'Haftorah'])
     source = st.checkbox('Try to use Dvar Malchus, or get from Chabad.org? If checked, sources from Dvar Malchus will attempt to be used.', value=True)
+    with st.expander("Advanced Options"):
+        scaleslide = st.slider('Change the scale of the PDFs from Chabad.org. Default is 100%.', min_value=30, max_value=100, value=100)
+        scale = scaleslide/100
+        st.write(f"Scale is {scale}")
+
     submit_button = st.form_submit_button(label="Generate PDF ▶️")
 
 if submit_button:
