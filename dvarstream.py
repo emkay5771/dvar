@@ -175,7 +175,7 @@ def chabadget(dor, opt, session):
     'margin-bottom': '0.1in',
     'margin-left': '0.1in',
     }
-    st.write(f"{scale}")
+    #st.write(f"{scale}")
     if os.path.exists(f"Chumash{session}.pdf") != True:
         merger = PdfMerger()
         if 'Chumash' in opt:
@@ -270,12 +270,13 @@ def rambamenglish(dor, session, opt):
 
 def hayomyom(dor, session):
     pdf_options = {
-    'scale': 0.48,
+    'scale': {scale},
     'margin-top': '0.1in',
     'margin-right': '0.1in',
     'margin-bottom': '0.1in',
     'margin-left': '0.1in',
     }
+    st.write(f"{scale}")
     merger3 = PdfMerger()
     if os.path.exists(f"Hayom{session}.pdf") != True:
         for i in dor:
