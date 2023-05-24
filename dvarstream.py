@@ -14,6 +14,7 @@ import streamlit as st #type: ignore
 import PyPDF2 #type: ignore
 from PyPDF2 import PdfMerger #type: ignore
 import glob
+import json
 
 st.set_page_config(page_title="Dvar Creator (BETA)", page_icon="📚", layout="wide", initial_sidebar_state="collapsed")
 st.title("Dvar Creator 📚 (BETA)")
@@ -456,6 +457,7 @@ with st.form(key="dvarform", clear_on_submit=False):
         scaleslide = st.slider('Change the scale of the PDFs from Chabad.org. Default is 100%.', 30, 100, 100)
         st.write("Scale is", scaleslide,"%")
         scale = int(scaleslide/100)
+        scale = json.dumps(scale)
 
     submit_button = st.form_submit_button(label="Generate PDF ▶️")
 
