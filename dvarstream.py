@@ -432,7 +432,7 @@ if submit_button:
             chabadget(dor, opt, session)
             if 'Rambam (3)-Hebrew' in opt or 'Rambam (3)-English' in opt or 'Rambam (1)-Bilingual' in opt or 'Rambam (1)-English' in opt or 'Rambam (1)-Hebrew' in opt:
                 rambamenglish(dor, session, opt)
-        if 'Rambam (3)-Bilingual' in opt:
+        if 'Rambam' in optconv:
             rambamenglish(dor, session, opt)
         
         if 'Hayom Yom' in opt:
