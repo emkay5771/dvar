@@ -222,7 +222,7 @@ def chabadget(dor, opt, session):
 
 def rambamenglish(dor, session, opt):
     pdf_options = {
-    'scale': 0.48,
+    'scale': scale2,
     'margin-top': '0.1in',
     'margin-right': '0.1in',
     'margin-bottom': '0.1in',
@@ -271,7 +271,7 @@ def rambamenglish(dor, session, opt):
 
 def hayomyom(dor, session):
     pdf_options = {
-    'scale': scale,
+    'scale': scale3,
     'margin-top': '0.1in',
     'margin-right': '0.1in',
     'margin-bottom': '0.1in',
@@ -454,10 +454,15 @@ with st.form(key="dvarform", clear_on_submit=False):
     source = st.checkbox('Try to use Dvar Malchus, or get from Chabad.org? If checked, sources from Dvar Malchus will attempt to be used.', value=True)
     with st.expander("Advanced Options"):
         cover = st.checkbox('Include the cover page from Dvar Malchus?', value=False)
-        scaleslide = st.slider('Change the scale of the PDFs from Chabad.org. Default is 100%.', 30, 100, 100)
+        scaleslide = st.slider('Change the scale of Chumash and Tanya from Chabad.Org. Default is 100%.', 30, 100, 100)
         st.write("Scale is", scaleslide,"%")
         scale = scaleslide/100
-        #scale = [scales]
+        scaleslide2 = st.slider('Change the scale of Rambam from Chabad.Org. Default is 50%.', 30, 100, 50)
+        st.write("Scale is", scaleslide2,"%")
+        scale2 = scaleslide2/100
+        scaleslide3 = st.slider('Change the scale of Hayom Yom from Chabad.Org. Default is 80%.', 30, 100, 80)
+        st.write("Scale is", scaleslide3,"%")
+        scale3 = scaleslide3/100
 
     submit_button = st.form_submit_button(label="Generate PDF ▶️")
 
@@ -478,13 +483,17 @@ if submit_button:
     daytorambam(week, dor)
     print(optconv)
     if source == True:
-        if os.path.exists(f"{session}.pdf") == False:
-            try:
-                with st.spinner('Attempting to download Dvar Malchus...'):
-                    dvarget(session)
-            except:
-                st.write("Dvar Malchus not found. Using Chabad.org...")
-                source = False
+        if 'Chumash' in opt or 'Tanya' in opt or 'Haftorah' in opt or 'Rambam (3)-Hebrew' in opt:
+            if os.path.exists(f"{session}.pdf") == False:
+                try:
+                    with st.spinner('Attempting to download Dvar Malchus...'):
+                        dvarget(session)
+                except:
+                    st.write("Dvar Malchus not found. Using Chabad.org...")
+                    source = False
+        else:
+            st.write("Dvar Malchus not needed. Using Chabad.org...")
+            source = False
     with st.spinner('Creating PDF...'):
         if source == False:
             chabadget(dor, opt, session)
