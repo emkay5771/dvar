@@ -45,75 +45,6 @@ def download_wait(path_to_downloads):
         seconds += 1
     return seconds   
 
-def dvarget2(session):
-    driver = webdriver.Chrome(options=options)
-    driver.get("https://dvarmalchus.org")
-    for each in ["/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div/div/div",
-                "/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div[2]/div/div/a/span/span[2]",
-                '/html/body/div[1]/section[9]/div/div/div/div[3]/div/div/div/div[1]/div/section/div/div/div/section/div/div/div/div/div/div/a/span/span[2]',
-                '/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div[2]/div/div/a']:
-        if driver.find_element(By.XPATH, each).text == "להורדת החוברת השבועית":
-            print("clicking regular" + each)
-            driver.find_element(By.XPATH, each).click()
-        else:
-            if driver.find_element(By.XPATH, each).text != "להורדת החוברת השבועית - חו״ל":
-                print("skipping " + each)
-                continue
-            elif driver.find_element(By.XPATH, each).text == "להורדת החוברת השבועית - חו״ל":
-                print("clicking alternate" + each)
-                driver.find_element(By.XPATH, each).click()
-                break
-
-    driver.switch_to.window(driver.window_handles[1])
-    #driver.save_screenshot("dvar.png")
-    download_wait("")
-    #os.remove("dvar.png")
-
-    files = os.listdir()
-    sessionyear = "2023" # set the session variable to "2023"
-    for file in files:
-        if file.endswith(".pdf") and sessionyear not in file: # check if the file is a pdf and does not contain the session variable
-            print("renaming " + file)
-            os.rename(os.path.join("", file), os.path.join("", f"dvar{session}.pdf"))
-
-
-    driver.quit()
-
-def dvarget3(session):
-    driver = webdriver.Chrome(options=options)
-    driver.get("https://dvarmalchus.org")
-    for each in ["/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div/div/div",
-                 "/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div[1]/div/div/a",
-                "/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div[2]/div/div/a/span/span[2]",
-                '/html/body/div[1]/section[9]/div/div/div/div[3]/div/div/div/div[1]/div/section/div/div/div/section/div/div/div/div/div/div/a/span/span[2]',
-                '/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div[2]/div/div/a']:
-        button = driver.find_element(By.XPATH, each)
-        if button.text == "להורדת החוברת השבועית":
-            print("clicking regular" + each)
-            url = button.get_attribute("href")
-            driver.get(url)
-        else:
-            if button.text != "להורדת החוברת השבועית - חו״ל":
-                print("skipping " + each)
-                continue
-            elif button.text == "להורדת החוברת השבועית - חו״ל":
-                print("clicking alternate" + each)
-                url = button.get_attribute("href")
-                driver.get(url)
-                break
-
-    # driver.save_screenshot("dvar.png")
-    #download_wait("")
-    # os.remove("dvar.png")
-
-    files = os.listdir()
-    sessionyear = "2023"  # set the session variable to "2023"
-    for file in files:
-        if file.endswith(".pdf") and sessionyear not in file:  # check if the file is a pdf and does not contain the session variable
-            print("renaming " + file)
-            os.rename(os.path.join("", file), os.path.join("", f"dvar{session}.pdf"))
-
-    driver.quit()
 
 def dvarget(session):
     driver = webdriver.Chrome(options=options)
@@ -277,7 +208,7 @@ def hayomyom(dor, session):
     'margin-bottom': '0.1in',
     'margin-left': '0.1in',
     }
-    st.write(f"{scale}")
+    #st.write(f"{scale}")
     merger3 = PdfMerger()
     if os.path.exists(f"Hayom{session}.pdf") != True:
         for i in dor:
@@ -449,7 +380,7 @@ with st.form(key="dvarform", clear_on_submit=False):
     st.title("Printout Creator")
     st.write("(Work in progress... Bugs may occur, and more options coming soon!)")
     st.write("This app is designed to create a printout for Chitas, Rambam, plus a few other things. It is currently designed to use both Dvar Malchus and Chabad.org as sources.")
-    week = st.multiselect('Select which days of the week you would like to print.', options=['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos'])
+    week = st.multiselect("Select which days of the week you would like to print. (Select as many as you'd like)", options=['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos'])
     opt = st.multiselect('Select which materials you want.', options=['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom', 'Haftorah'])
     source = st.checkbox('Try to use Dvar Malchus, or get from Chabad.org? If checked, sources from Dvar Malchus will attempt to be used.', value=True)
     with st.expander("Advanced Options"):
@@ -491,6 +422,7 @@ if submit_button:
                 except:
                     st.write("Dvar Malchus not found. Using Chabad.org...")
                     source = False
+                    cover = False
         else:
             st.write("Dvar Malchus not needed. Using Chabad.org...")
             source = False
