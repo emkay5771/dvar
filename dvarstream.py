@@ -456,8 +456,8 @@ with st.form(key="dvarform", clear_on_submit=False):
         cover = st.checkbox('Include the cover page from Dvar Malchus?', value=False)
         scaleslide = st.slider('Change the scale of the PDFs from Chabad.org. Default is 100%.', 30, 100, 100)
         st.write("Scale is", scaleslide,"%")
-        scale = scaleslide/100
-        scale = json.dumps(scale)
+        scales = scaleslide/100
+        scale = str(scales)
 
     submit_button = st.form_submit_button(label="Generate PDF ▶️")
 
