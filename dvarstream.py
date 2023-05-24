@@ -261,6 +261,7 @@ def opttouse(opt, optconv):
             optconv.append('חומש לקריאה בציבור')
         elif 'Rambam' in i or 'Hayom Yom' in i or 'Hatforah' in i:
             optconv.append(i)
+    st.write(optconv)
     return optconv
         
 def daytorambam(week, dor):
@@ -307,7 +308,7 @@ def dynamicmake(dow, optconv, opt, source, session):
                     doc_out.insert_pdf(fitz.open(f"Hayom{session}.pdf"))
                 
     else:
-        #st.write(optconv)
+        st.write(optconv)
         if cover == True:
             doc_out.insert_pdf(doc, from_page=0, to_page=0)
         for q in optconv:
