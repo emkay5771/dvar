@@ -259,7 +259,7 @@ def opttouse(opt, optconv):
             optconv.append('רמב"ם - שלושה פרקים ליום')
         elif i == 'Haftorah':
             optconv.append('חומש לקריאה בציבור')
-        elif 'Rambam' in i or 'Hayom Yom' in i or 'Hatforah' in i:
+        elif 'Rambam' in i or 'Hayom Yom' in i:
             optconv.append(i)
     #st.write(optconv)
     return optconv
@@ -278,6 +278,7 @@ def daytorambam(week, dor):
 def dynamicmake(dow, optconv, opt, source, session):
     output_dir = ""
     toc = []
+    doc_out = fitz.open()
     #st.write(optconv)
     if source == True:
         try:
@@ -286,12 +287,14 @@ def dynamicmake(dow, optconv, opt, source, session):
             #st.write("opened dvar")
             toc = doc.get_toc()
             #st.write("got toc")
+            if cover == True:
+                doc_out.insert_pdf(doc, from_page=0, to_page=0)
         except:
             st.write("Something went wrong with Dvar Malchus. Attempting to use Chabad.org.")
             source = False
             chabadget(dor, opt, session)
             pass
-    doc_out = fitz.open()
+   
     #print(toc)
     if source == False:
             print("Chabad.org")
@@ -309,12 +312,11 @@ def dynamicmake(dow, optconv, opt, source, session):
                 
     else:
         #st.write(optconv)
-        if cover == True:
-            doc_out.insert_pdf(doc, from_page=0, to_page=0)
         for q in optconv:
             #st.write(q)
             for z in dow:
                 for i, top_level in enumerate(toc): #type: ignore
+                    #st.write(top_level)
                     if not top_level[2]:
                         continue  # skip top-level bookmarks without a page number
                     if top_level[1] == q:
@@ -335,6 +337,7 @@ def dynamicmake(dow, optconv, opt, source, session):
                                 if top_level[1] == 'רמב"ם - שלושה פרקים ליום':
                                     end_page = toc[j+1][2] - 1 #type: ignore
                                     print("Rambam found")
+                                
                                 doc_out.insert_pdf(doc, from_page=start_page, to_page=end_page) #type: ignore
                                 continue
             
@@ -415,7 +418,7 @@ if submit_button:
     daytorambam(week, dor)
     print(optconv)
     if source == True:
-        if 'Chumash' in opt or 'Tanya' in opt or 'Haftorah' in opt or 'Rambam (3)-Hebrew' in opt:
+        if 'Chumash' in opt or 'Tanya' in opt or 'Haftorah' in opt or 'Rambam (3)-Hebrew' in opt or 'Maamar' in opt:
             if os.path.exists(f"{session}.pdf") == False:
                 try:
                     with st.spinner('Attempting to download Dvar Malchus...'):
