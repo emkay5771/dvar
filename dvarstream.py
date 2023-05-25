@@ -32,21 +32,8 @@ options.add_experimental_option('prefs', {
 })
 chrome_driver_path = "/usr/bin/chromedriver"
 driver = webdriver.Chrome(executable_path=chrome_driver_path, options=options)
-    
-def download_wait(path_to_downloads):
-    seconds = 0
-    dl_wait = True
-    while dl_wait and seconds < 20:
-        time.sleep(1)
-        dl_wait = False
-        for fname in os.listdir("/home/mendy/ccscraper/dvarmalchus"):
-            if fname.endswith('.crdownload'):
-                dl_wait = True
-        seconds += 1
-    return seconds   
 
-
-def dvarget(session):
+def dvarget(session): # attempts to retrieve dvar malchus pdf
     driver = webdriver.Chrome(options=options)
     driver.get("https://dvarmalchus.org")
     xpaths = [
@@ -99,7 +86,7 @@ def dvarget(session):
 
     driver.quit()
 
-def chabadget(dor, opt, session):
+def chabadget(dor, opt, session): # retrieves chumash and tanya from chabad.org
     pdf_options = {
     'scale': scale,
     'margin-top': '0.1in',
@@ -151,7 +138,7 @@ def chabadget(dor, opt, session):
             #with open(f"Tanya{session}.pdf", "rb") as f:
           #      st.download_button(label="Download Tanya", data=f, file_name=f"Tanya{session}.pdf", mime="application/pdf")
 
-def rambamenglish(dor, session, opt):
+def rambamenglish(dor, session, opt): # retrieves all rambam versions from chabad.org
     pdf_options = {
     'scale': scale2,
     'margin-top': '0.1in',
@@ -200,7 +187,7 @@ def rambamenglish(dor, session, opt):
         merger.close()
         os.remove(f"temp{session}.pdf")
 
-def hayomyom(dor, session):
+def hayomyom(dor, session): #gets hayom yom from chabad.org
     pdf_options = {
     'scale': scale3,
     'margin-top': '0.1in',
@@ -231,7 +218,7 @@ def hayomyom(dor, session):
         os.remove(f"temp{session}.pdf")
 
 
-def daytoheb(week, dow):
+def daytoheb(week, dow): #converts day of week from week in streamlit to hebrew date, to be used when parsing dvar malchus
     for i in week:
         if i == 'Sunday':
             dow.append('יום ראשון')
@@ -249,7 +236,7 @@ def daytoheb(week, dow):
             dow.append('שבת קודש')
     return dow
 
-def opttouse(opt, optconv):
+def opttouse(opt, optconv): #sorts through options from opt to optconv, converting some options to hebrew for dvar malchus, to be used when compiling pdf 
     for i in opt:
         if i == 'Chumash':
             optconv.append('חומש יומי')
@@ -264,7 +251,7 @@ def opttouse(opt, optconv):
     #st.write(optconv)
     return optconv
         
-def daytorambam(week, dor):
+def daytorambam(week, dor): #converts day of week from week in streamlit to date format for chabad.org, for rambamenglish(), hayonyom(), and chabadget()
     today = date.today()
     day_to_n = {'Monday': 0, 'Tuesday': 1, 'Wednesday': 2, 'Thursday': 3, 'Friday': 4, 'Shabbos': 5, 'Sunday': 6}
     for i in week:
@@ -275,7 +262,7 @@ def daytorambam(week, dor):
         dor.append(f'{m}%2F{d}%2F{y}')
     return dor
 
-def dynamicmake(dow, optconv, opt, source, session):
+def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collecting all the necessary files
     output_dir = ""
     toc = []
     doc_out = fitz.open()
@@ -337,7 +324,6 @@ def dynamicmake(dow, optconv, opt, source, session):
                                 if top_level[1] == 'רמב"ם - שלושה פרקים ליום':
                                     end_page = toc[j+1][2] - 1 #type: ignore
                                     print("Rambam found")
-                                
                                 doc_out.insert_pdf(doc, from_page=start_page, to_page=end_page) #type: ignore
                                 continue
             
@@ -380,7 +366,7 @@ def dynamicmake(dow, optconv, opt, source, session):
     doc_out.close()
 
 
-with st.form(key="dvarform", clear_on_submit=False):
+with st.form(key="dvarform", clear_on_submit=False): #streamlit form for user input
     st.title("Printout Creator")
     st.write("(Work in progress... Bugs may occur, and more options coming soon!)")
     st.write("This app is designed to create a printout for Chitas, Rambam, plus a few other things. It is currently designed to use both Dvar Malchus and Chabad.org as sources.")
@@ -401,7 +387,7 @@ with st.form(key="dvarform", clear_on_submit=False):
 
     submit_button = st.form_submit_button(label="Generate PDF ▶️")
 
-if submit_button:
+if submit_button: #if the user submits the form, run the following code, which will create the pdf using above functions
     if id not in st.session_state:
         st.session_state['id'] = dt.now()
     session = st.session_state.id
@@ -418,7 +404,7 @@ if submit_button:
     daytorambam(week, dor)
     print(optconv)
     if source == True:
-        if 'Chumash' in opt or 'Tanya' in opt or 'Haftorah' in opt or 'Rambam (3)-Hebrew' in opt or 'Maamar' in opt:
+        if 'Chumash' in opt or 'Tanya' in opt or 'Haftorah' in opt or 'Rambam (3)-Hebrew' in opt:
             if os.path.exists(f"{session}.pdf") == False:
                 try:
                     with st.spinner('Attempting to download Dvar Malchus...'):
