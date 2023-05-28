@@ -406,8 +406,10 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
 
 with st.form(key="dvarform", clear_on_submit=False): #streamlit form for user input
     st.title("Printout Creator")
-    st.write("(Work in progress... Bugs may occur, and more options coming soon!)")
-    st.write("This app is designed to create a printout for Chitas, Rambam, plus a few other things. It is currently designed to use both Dvar Malchus and Chabad.org as sources.")
+    st.markdown("""This app is designed to create a printout for Chitas, Rambam, plus a few other things. To get the materials directly and support the original publishers, go to
+    <a href=https://dvarmalchus.org/>Dvar Malchus</a> and <a href=https://www.chabad.org/dailystudy/default_cdo/jewish/Daily-Study.htm/>Chabad.org</a>.
+    """, unsafe_allow_html=True)
+
     week = st.multiselect("Select which days of the week you would like to print. (Select as many as you'd like)", options=['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos'])
     opt = st.multiselect('Select which materials you want.', options=['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom', 'Project Likutei Sichos (Hebrew)', 'Maamarim', 'Haftorah'])
     source = st.checkbox('Try to use Dvar Malchus, or get from Chabad.org? If checked, sources from Dvar Malchus will attempt to be used.', value=True)
@@ -424,7 +426,8 @@ with st.form(key="dvarform", clear_on_submit=False): #streamlit form for user in
         scale3 = scaleslide3/100
 
     submit_button = st.form_submit_button(label="Generate PDF ▶️")
-
+if not submit_button:
+    st.write("NOTE: (Work in progress... Bugs may occur, and more options coming soon!)")
 if submit_button: #if the user submits the form, run the following code, which will create the pdf using above functions
     if id not in st.session_state:
         st.session_state['id'] = dt.now()
