@@ -246,6 +246,11 @@ def opttouse(opt, optconv): #sorts through options from opt to optconv, converti
             optconv.append('רמב"ם - שלושה פרקים ליום')
         elif i == 'Haftorah':
             optconv.append('חומש לקריאה בציבור')
+        elif i == 'Project Likutei Sichos (Hebrew)':
+            optconv.append('לקוטי שיחות')
+        elif i == 'Maamarim':
+            optconv.append('מאמרים')
+            #print("appeneded maamarim")
         elif 'Rambam' in i or 'Hayom Yom' in i:
             optconv.append(i)
     #st.write(optconv)
@@ -261,6 +266,12 @@ def daytorambam(week, dor): #converts day of week from week in streamlit to date
         y, m, d = str(linkappend).split("-")
         dor.append(f'{m}%2F{d}%2F{y}')
     return dor
+
+def find_next_top_level_bookmark(toc, current_index):
+    for i in range(current_index + 1, len(toc)):
+        if toc[i][0] == 1:
+            return toc[i][2] - 2
+    return None
 
 def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collecting all the necessary files
     output_dir = ""
@@ -278,6 +289,10 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
                 doc_out.insert_pdf(doc, from_page=0, to_page=0)
         except:
             st.write("Something went wrong with Dvar Malchus. Attempting to use Chabad.org.")
+            print(opt)
+            if all(option not in chabadoptions for option in opt) and any(option in opt for option in ['Project Likutei Sichos', 'Maamarim', 'Haftorah']):
+                st.error("Project Likutei Sichos, the Haftorah, and Maamarim are not available from Chabad.org. Please try again.")
+                st.stop()
             source = False
             chabadget(dor, opt, session)
             pass
@@ -296,6 +311,9 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
                     doc_out.insert_pdf(fitz.open(f"Rambam{session}.pdf")) #type: ignore
                 elif option == 'Hayom Yom':
                     doc_out.insert_pdf(fitz.open(f"Hayom{session}.pdf"))
+                if all(option not in chabadoptions for option in opt) and any(option in opt for option in ['Project Likutei Sichos', 'Maamarim', 'Haftorah']):
+                    st.error("Project Likutei Sichos, the Haftorah, and Maamarim are not available from Chabad.org. Please try again.")
+                    st.stop()
                 
     else:
         #st.write(optconv)
@@ -327,10 +345,29 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
                                 doc_out.insert_pdf(doc, from_page=start_page, to_page=end_page) #type: ignore
                                 continue
             
-            if q == 'חומש לקריאה בציבור':
+            if q == 'חומש לקריאה בציבור' or q == 'מאמרים' or q == 'לקוטי שיחות':
                 for i, item in enumerate(toc): #type: ignore
+                    #st.write(item)
                     #print(item)
-                    if item[1] == 'חומש לקריאה בציבור':
+                    if item[1] == 'לקוטי שיחות' and q == 'לקוטי שיחות':
+                        print("Likutei Sichos found")
+                        pdf_file = open(f"dvar{session}.pdf", "rb")
+                        pdf_reader = PyPDF2.PdfReader(pdf_file)
+                        page_num_start = item[2] - 1
+                        print(page_num_start)
+                        page_num_end = find_next_top_level_bookmark(toc, i) #type: ignore
+                        print(page_num_end)
+                        doc_out.insert_pdf(doc, from_page=page_num_start, to_page=page_num_end) #type: ignore
+                    if item[1] == 'מאמרים' and q == 'מאמרים':
+                        print("Maamarim found")
+                        pdf_file = open(f"dvar{session}.pdf", "rb")
+                        pdf_reader = PyPDF2.PdfReader(pdf_file)
+                        page_num_start = item[2] - 1
+                        print(page_num_start)
+                        page_num_end = find_next_top_level_bookmark(toc, i) #type: ignore
+                        print(page_num_end)
+                        doc_out.insert_pdf(doc, from_page=page_num_start, to_page=page_num_end) #type: ignore
+                    if item[1] == 'חומש לקריאה בציבור' and q == 'חומש לקריאה בציבור':
                         pdf_file = open(f"dvar{session}.pdf", "rb")
                         pdf_reader = PyPDF2.PdfReader(pdf_file)
                         page_num_start = item[2] - 1
@@ -366,12 +403,13 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
     doc_out.close()
 
 
+
 with st.form(key="dvarform", clear_on_submit=False): #streamlit form for user input
     st.title("Printout Creator")
     st.write("(Work in progress... Bugs may occur, and more options coming soon!)")
     st.write("This app is designed to create a printout for Chitas, Rambam, plus a few other things. It is currently designed to use both Dvar Malchus and Chabad.org as sources.")
     week = st.multiselect("Select which days of the week you would like to print. (Select as many as you'd like)", options=['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos'])
-    opt = st.multiselect('Select which materials you want.', options=['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom', 'Haftorah'])
+    opt = st.multiselect('Select which materials you want.', options=['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom', 'Project Likutei Sichos (Hebrew)', 'Maamarim', 'Haftorah'])
     source = st.checkbox('Try to use Dvar Malchus, or get from Chabad.org? If checked, sources from Dvar Malchus will attempt to be used.', value=True)
     with st.expander("Advanced Options"):
         cover = st.checkbox('Include the cover page from Dvar Malchus?', value=False)
@@ -392,7 +430,8 @@ if submit_button: #if the user submits the form, run the following code, which w
         st.session_state['id'] = dt.now()
     session = st.session_state.id
     weekorder = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos']
-    optorder = ['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom', 'Haftorah']
+    optorder = ['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom', 'Project Likutei Sichos (Hebrew)', 'Maamarim', 'Haftorah']
+    chabadoptions = ['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom']
     dow = []
     optconv = []
     dor = []
@@ -404,7 +443,7 @@ if submit_button: #if the user submits the form, run the following code, which w
     daytorambam(week, dor)
     print(optconv)
     if source == True:
-        if 'Chumash' in opt or 'Tanya' in opt or 'Haftorah' in opt or 'Rambam (3)-Hebrew' in opt:
+        if 'Chumash' in opt or 'Tanya' in opt or 'Haftorah' in opt or 'Rambam (3)-Hebrew' in opt or 'Project Likutei Sichos (Hebrew)' in opt or 'Maamarim' in opt:
             if os.path.exists(f"{session}.pdf") == False:
                 try:
                     with st.spinner('Attempting to download Dvar Malchus...'):
@@ -421,11 +460,15 @@ if submit_button: #if the user submits the form, run the following code, which w
         #st.write(opt)
         if source == False:
             chabadget(dor, opt, session)
+            #st.write(opt)
             if 'Rambam (3)-Hebrew' in opt or 'Rambam (3)-Bilingual' in opt or 'Rambam (3)-English' in opt or 'Rambam (1)-Bilingual' in opt or 'Rambam (1)-English' in opt or 'Rambam (1)-Hebrew' in opt:
+                #st.write("getting rambam")
                 rambamenglish(dor, session, opt)
         if source == True:
             if 'Rambam (3)-Bilingual' in opt or 'Rambam (3)-English' in opt or 'Rambam (1)-Bilingual' in opt or 'Rambam (1)-English' in opt or 'Rambam (1)-Hebrew' in opt:
                 #st.write("getting rambam")
+                rambamenglish(dor, session, opt)
+            elif 'Rambam (3)-Hebrew' in opt and os.path.exists(f"Dvar{session}.pdf") == False:
                 rambamenglish(dor, session, opt)
         
         if 'Hayom Yom' in opt:
