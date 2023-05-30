@@ -273,10 +273,30 @@ def find_next_top_level_bookmark(toc, current_index):
             return toc[i][2] - 2
     return None
 
+def dedupe(pages, pages2, pages3, start_page, end_page): #dedupes the pages when appending, to ensure that pages aren't repeated
+    pages2.append(start_page)
+    pages2.append(end_page)
+    if start_page in pages:
+        start_page = start_page + 1
+        pages.append(start_page)
+        pages3.append(start_page)
+    if end_page in pages:
+        end_page = end_page - 1
+        pages.append(end_page)
+        pages3.append(end_page)
+    if start_page not in pages:
+        pages.append(start_page)
+    if end_page not in pages:
+        pages.append(end_page)
+    return start_page,end_page
+
 def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collecting all the necessary files
     output_dir = ""
     toc = []
     doc_out = fitz.open()
+    pages = []
+    pages2 = []
+    pages3 = []
     #st.write(optconv)
     if source == True:
         try:
@@ -342,6 +362,9 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
                                 if top_level[1] == 'רמב"ם - שלושה פרקים ליום':
                                     end_page = toc[j+1][2] - 1 #type: ignore
                                     print("Rambam found")
+                                print(f"Current Start Page: {start_page}. Current End Page: {end_page}") #type: ignore
+                                start_page, end_page = dedupe(pages, pages2, pages3, start_page, end_page) #type: ignore
+                                print(f"New Start Page: {start_page}. New End Page: {end_page}")
                                 doc_out.insert_pdf(doc, from_page=start_page, to_page=end_page) #type: ignore
                                 continue
             
@@ -395,10 +418,7 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
                 doc_out.insert_pdf(fitz.open(f"Hayom{session}.pdf")) 
                 print("Appended")
                 continue
-
-                      
-        
-                             
+                       
     doc_out.save(os.path.join(output_dir, f"output_dynamic{session}.pdf"))
     doc_out.close()
 
@@ -471,7 +491,7 @@ if submit_button: #if the user submits the form, run the following code, which w
             if 'Rambam (3)-Bilingual' in opt or 'Rambam (3)-English' in opt or 'Rambam (1)-Bilingual' in opt or 'Rambam (1)-English' in opt or 'Rambam (1)-Hebrew' in opt:
                 #st.write("getting rambam")
                 rambamenglish(dor, session, opt)
-            elif 'Rambam (3)-Hebrew' in opt and os.path.exists(f"Dvar{session}.pdf") == False:
+            elif 'Rambam (3)-Hebrew' in opt and os.path.exists(f"dvar{session}.pdf") == False:
                 rambamenglish(dor, session, opt)
         
         if 'Hayom Yom' in opt:
