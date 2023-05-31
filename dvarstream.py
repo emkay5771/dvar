@@ -33,7 +33,7 @@ options.add_experimental_option('prefs', {
     "plugins.always_open_pdf_externally": True
 })
 chrome_driver_path = "/usr/bin/chromedriver"
-service = Service(ChromeDriverManager().install())
+service = Service(chrome_driver_path)
 driver = webdriver.Chrome(service=service, options=options)
 #driver = webdriver.Chrome(executable_path=chrome_driver_path, options=options)
 
