@@ -1,4 +1,6 @@
 from selenium import webdriver #type: ignore
+from selenium.webdriver.chrome.service import Service #type: ignore
+from webdriver_manager.chrome import ChromeDriverManager #type: ignore
 from selenium.webdriver.common.by import By #type: ignore
 from selenium.webdriver.support.ui import WebDriverWait #type: ignore
 from selenium.webdriver.support import expected_conditions as EC #type: ignore
@@ -31,7 +33,9 @@ options.add_experimental_option('prefs', {
     "plugins.always_open_pdf_externally": True
 })
 chrome_driver_path = "/usr/bin/chromedriver"
-driver = webdriver.Chrome(executable_path=chrome_driver_path, options=options)
+service = Service(ChromeDriverManager().install())
+driver = webdriver.Chrome(service=service, options=options)
+#driver = webdriver.Chrome(executable_path=chrome_driver_path, options=options)
 
 def dvarget(session): # attempts to retrieve dvar malchus pdf
     driver = webdriver.Chrome(options=options)
