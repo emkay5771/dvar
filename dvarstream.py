@@ -509,7 +509,7 @@ if submit_button: #if the user submits the form, run the following code, which w
         st.success("PDF created successfully!")
         st.balloons()
         with open(f"output_dynamic{session}.pdf", "rb") as f:
-            st.download_button(label="Download ⬇️", data=f, file_name="output_dynamic.pdf", mime="application/pdf")
+            st.download_button(label="Download ⬇️", data=f, file_name="Custom_Chitas.pdf", mime="application/pdf")
 
 
     if glob.glob("Rambam*.pdf"):
