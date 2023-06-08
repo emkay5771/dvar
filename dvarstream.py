@@ -227,7 +227,7 @@ def parshaget(date1): #get parsha from date for shnayim mikra
     year, date, month = date1.split(", ")
     year, date, month = int(year), int(date), int(month)
     parsha = parshios.getparsha_string(dates.GregorianDate(year, date, month), israel=False, hebrew=True)
-    st.write(f"{parsha}")
+    st.write(f"This week's parsha is {parsha}")
     return parsha
 
 def daytoheb(week, dow): #converts day of week from week in streamlit to hebrew date, to be used when parsing dvar malchus
