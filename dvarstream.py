@@ -230,6 +230,19 @@ def parshaget(date1): #get parsha from date for shnayim mikra
     st.write(f"This week's parsha is {parsha}.")
     return parsha
 
+def shnayimget(session): #get shnayim mikra from github repo
+    pdf_options = {}
+    #TODO: make search for parsha more robust, including potential for double parsha (add fuzzy matching?)
+    if os.path.exists(f"Shnayim{session}.pdf") != True:
+        if 'Shnayim Mikra' in opt:
+            driver = webdriver.Chrome(options=options)
+            driver.get(f"https://github.com/emkay5771/shnayimfiles/blob/master/{parsha}.pdf?raw=true")
+            wait = WebDriverWait(driver, 10)
+            time.sleep(5)
+            driver.quit()
+            if os.path.exists(f"{parsha}.pdf") == True:
+                os.rename(f"{parsha}.pdf", f"Shnayim{session}.pdf")
+
 def daytoheb(week, dow): #converts day of week from week in streamlit to hebrew date, to be used when parsing dvar malchus
     for i in week:
         if i == 'Sunday':
@@ -262,6 +275,8 @@ def opttouse(opt, optconv): #sorts through options from opt to optconv, converti
             optconv.append('לקוטי שיחות')
         elif i == 'Maamarim':
             optconv.append('מאמרים')
+        elif i == 'Shnayim Mikra':
+            optconv.append('Shnayim Mikra')
             #print("appeneded maamarim")
         elif 'Rambam' in i or 'Hayom Yom' in i:
             optconv.append(i)
@@ -343,6 +358,8 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
                     doc_out.insert_pdf(fitz.open(f"Rambam{session}.pdf")) #type: ignore
                 elif option == 'Hayom Yom':
                     doc_out.insert_pdf(fitz.open(f"Hayom{session}.pdf"))
+                elif option == 'Shnayim Mikra':
+                    doc_out.insert_pdf(fitz.open(f"Shnayim{session}.pdf"))
                 if all(option not in chabadoptions for option in opt) and any(option in opt for option in ['Project Likutei Sichos', 'Maamarim', 'Haftorah']):
                     st.error("Project Likutei Sichos, the Haftorah, and Maamarim are not available from Chabad.org. Please try again.")
                     st.stop()
@@ -430,21 +447,32 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
                 doc_out.insert_pdf(fitz.open(f"Hayom{session}.pdf")) 
                 print("Appended")
                 continue
+
+            if q == 'Shnayim Mikra':
+                print("Shnayim Mikra found")
+                #st.write("Appending Shnayim Mikra")
+                doc_out.insert_pdf(fitz.open(f"Shnayim{session}.pdf")) 
+                print("Appended")
+                continue
                        
     doc_out.save(os.path.join(output_dir, f"output_dynamic{session}.pdf"))
     doc_out.close()
 
 
-
+#TODO: add full kriah as options
 with st.form(key="dvarform", clear_on_submit=False): #streamlit form for user input
     st.title("Printout Creator")
     st.markdown("""This app is designed to create a printout for Chitas, Rambam, plus a few other things. To get the materials directly and support the original publishers, go to
     <a href=https://dvarmalchus.org/>Dvar Malchus</a> and <a href=https://www.chabad.org/dailystudy/default_cdo/jewish/Daily-Study.htm/>Chabad.org</a>.
     """, unsafe_allow_html=True)
+    st.markdown("Any major bugs noticed? Features that you'd like to see? Comments? Email me <a href=mailto:mkievman@outlook.com/>here.</a>", unsafe_allow_html=True)
     date1 = date.today().strftime('%Y, %-m, %-d')
-    parshaget(date1)
+    year, day, month = date1.split(", ")
+    year, day, month = int(year), int(day), int(month)
+    parsha = parshios.getparsha_string(dates.GregorianDate(year, day, month), israel=False, hebrew=True)
+    #parshaget(date1)
     week = st.multiselect("Select which days of the week you would like to print. (Select as many as you'd like)", options=['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos'])
-    opt = st.multiselect('Select which materials you want.', options=['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom', 'Project Likutei Sichos (Hebrew)', 'Maamarim', 'Haftorah'])
+    opt = st.multiselect('Select which materials you want.', options=['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom', 'Project Likutei Sichos (Hebrew)', 'Maamarim', 'Haftorah', 'Shnayim Mikra'])
     source = st.checkbox('Try to use Dvar Malchus, or get from Chabad.org? If checked, sources from Dvar Malchus will attempt to be used.', value=True)
     with st.expander("Advanced Options"):
         cover = st.checkbox('Include the cover page from Dvar Malchus?', value=False)
@@ -460,13 +488,14 @@ with st.form(key="dvarform", clear_on_submit=False): #streamlit form for user in
 
     submit_button = st.form_submit_button(label="Generate PDF ▶️")
 if not submit_button:
-    st.write("NOTE: (Work in progress... Bugs may occur, and more options coming soon!)")
+    st.info("NOTE: (Work in progress... Bugs may occur, and more options coming soon!)")
+    st.warning("NOTE 2: Shnayim Mikra will likely be buggy, as fuzzy parsha matching has not been implemented yet. Should work for basic (non-doubled) parshiyos though. Fix coming shortly.")
 if submit_button: #if the user submits the form, run the following code, which will create the pdf using above functions
     if id not in st.session_state:
         st.session_state['id'] = dt.now()
     session = st.session_state.id
     weekorder = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos']
-    optorder = ['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom', 'Project Likutei Sichos (Hebrew)', 'Maamarim', 'Haftorah']
+    optorder = ['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom', 'Project Likutei Sichos (Hebrew)', 'Maamarim', 'Haftorah', 'Shnayim Mikra']
     chabadoptions = ['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom']
     dow = []
     optconv = []
@@ -511,6 +540,9 @@ if submit_button: #if the user submits the form, run the following code, which w
             #st.write(opt)
             #st.write(optconv)
             hayomyom(dor, session)
+
+        if 'Shnayim Mikra' in opt:
+            shnayimget(session) 
 
         dynamicmake(dow, optconv, opt, source, session)
 
@@ -563,6 +595,17 @@ if submit_button: #if the user submits the form, run the following code, which w
             # check if the file is older than 10 minutes
             if dt.now() - file_datetime > timedelta(minutes=1):
                 if file != f'dvar{session}.pdf':
+                    os.remove(file)
+    
+    if glob.glob('Shnayim*.pdf'):
+        for file in glob.glob('Shnayim*.pdf'):
+            # remove the prefix "flights" and the suffix ".csv" from the file name
+            timestamp = file.lstrip("Shnayim").rstrip(".pdf")
+            # parse the timestamp using the format string "%Y-%m-%d %H:%M:%S.%f"
+            file_datetime = dt.strptime(timestamp, "%Y-%m-%d %H:%M:%S.%f")
+            # check if the file is older than 10 minutes
+            if dt.now() - file_datetime > timedelta(minutes=1):
+                if file != f'Shnayim{session}.pdf':
                     os.remove(file)
     
     if glob.glob("output_dynamic*.pdf"):
