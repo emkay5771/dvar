@@ -17,6 +17,8 @@ import PyPDF2 #type: ignore
 from PyPDF2 import PdfMerger #type: ignore
 import glob
 import json
+from pyluach import parshios, dates
+
 
 st.set_page_config(page_title="Dvar Creator (BETA)", page_icon="📚", layout="wide", initial_sidebar_state="collapsed")
 st.title("Dvar Creator 📚 (BETA)")
@@ -221,6 +223,12 @@ def hayomyom(dor, session): #gets hayom yom from chabad.org
         merger3.close()
         os.remove(f"temp{session}.pdf")
 
+def parshaget(date1): #get parsha from date for shnayim mikra
+    year, date, month = date1.split(", ")
+    year, date, month = int(year), int(date), int(month)
+    parsha = parshios.getparsha_string(dates.GregorianDate(year, date, month), israel=False, hebrew=True)
+    st.write(f"{parsha}")
+    return parsha
 
 def daytoheb(week, dow): #converts day of week from week in streamlit to hebrew date, to be used when parsing dvar malchus
     for i in week:
@@ -433,7 +441,8 @@ with st.form(key="dvarform", clear_on_submit=False): #streamlit form for user in
     st.markdown("""This app is designed to create a printout for Chitas, Rambam, plus a few other things. To get the materials directly and support the original publishers, go to
     <a href=https://dvarmalchus.org/>Dvar Malchus</a> and <a href=https://www.chabad.org/dailystudy/default_cdo/jewish/Daily-Study.htm/>Chabad.org</a>.
     """, unsafe_allow_html=True)
-
+    date1 = date.today().strftime('%Y, %-m, %-d')
+    parshaget(date1)
     week = st.multiselect("Select which days of the week you would like to print. (Select as many as you'd like)", options=['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos'])
     opt = st.multiselect('Select which materials you want.', options=['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom', 'Project Likutei Sichos (Hebrew)', 'Maamarim', 'Haftorah'])
     source = st.checkbox('Try to use Dvar Malchus, or get from Chabad.org? If checked, sources from Dvar Malchus will attempt to be used.', value=True)
