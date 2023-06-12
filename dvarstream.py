@@ -230,18 +230,31 @@ def parshaget(date1): #get parsha from date for shnayim mikra
     st.write(f"This week's parsha is {parsha}.")
     return parsha
 
-def shnayimget(session): #get shnayim mikra from github repo
+def shnayimget(session, parsha): #get shnayim mikra from github repo
     pdf_options = {}
-    #TODO: make search for parsha more robust, including potential for double parsha (add fuzzy matching?)
+    #TODO: make search for parsha more robust by standardizing parsha names (name, name2) (remove special parshios from file name)
+    parsha2= parsha.split(" ")
+    parshaurl = []
+    filename = []
+    for parsha in parsha2:
+        if parshaurl != []:
+            parshaurl.append("%20")
+        parshaurl.append(parsha)
+        filename.append(parsha)
+        parshaurl2 = "".join(parshaurl)
+        filename2 = " ".join(filename)
+        #print(parshaurl)
+    print(parshaurl2)
     if os.path.exists(f"Shnayim{session}.pdf") != True:
         if 'Shnayim Mikra' in opt:
             driver = webdriver.Chrome(options=options)
-            driver.get(f"https://github.com/emkay5771/shnayimfiles/blob/master/{parsha}.pdf?raw=true")
+            driver.get(f"https://github.com/emkay5771/shnayimfiles/blob/master/{parshaurl2}.pdf?raw=true")
             wait = WebDriverWait(driver, 10)
-            time.sleep(5)
+            time.sleep(2)
             driver.quit()
-            if os.path.exists(f"{parsha}.pdf") == True:
-                os.rename(f"{parsha}.pdf", f"Shnayim{session}.pdf")
+            if os.path.exists(f"{filename2}.pdf") == True:
+                print(f"file exists {filename2}")
+                os.rename(f"{filename2}.pdf", f"Shnayim{session}.pdf")
 
 def daytoheb(week, dow): #converts day of week from week in streamlit to hebrew date, to be used when parsing dvar malchus
     for i in week:
@@ -469,7 +482,7 @@ with st.form(key="dvarform", clear_on_submit=False): #streamlit form for user in
     date1 = date.today().strftime('%Y, %-m, %-d')
     year, day, month = date1.split(", ")
     year, day, month = int(year), int(day), int(month)
-    parsha = parshios.getparsha_string(dates.GregorianDate(year, day, month), israel=False, hebrew=True)
+    parsha = parshios.getparsha_string(dates.GregorianDate(year, month, day), israel=False, hebrew=True)
     #parshaget(date1)
     week = st.multiselect("Select which days of the week you would like to print. (Select as many as you'd like)", options=['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos'])
     opt = st.multiselect('Select which materials you want.', options=['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom', 'Project Likutei Sichos (Hebrew)', 'Maamarim', 'Haftorah', 'Shnayim Mikra'])
@@ -489,7 +502,7 @@ with st.form(key="dvarform", clear_on_submit=False): #streamlit form for user in
     submit_button = st.form_submit_button(label="Generate PDF ▶️")
 if not submit_button:
     st.info("NOTE: (Work in progress... Bugs may occur, and more options coming soon!)")
-    st.warning("NOTE 2: Shnayim Mikra will likely be buggy, as fuzzy parsha matching has not been implemented yet. Should work for basic (non-doubled) parshiyos though. Fix coming shortly.")
+    st.warning("NOTE 2: Shnayim Mikra may not work for all double parshios, though currently works through July. Full implementation coming shortly.")
 if submit_button: #if the user submits the form, run the following code, which will create the pdf using above functions
     if id not in st.session_state:
         st.session_state['id'] = dt.now()
@@ -542,7 +555,7 @@ if submit_button: #if the user submits the form, run the following code, which w
             hayomyom(dor, session)
 
         if 'Shnayim Mikra' in opt:
-            shnayimget(session) 
+            shnayimget(session, parsha) 
 
         dynamicmake(dow, optconv, opt, source, session)
 
