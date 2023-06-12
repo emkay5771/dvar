@@ -13,15 +13,18 @@ from datetime import date #type: ignore
 from datetime import datetime as dt #type: ignore
 from datetime import timedelta #type: ignore
 import streamlit as st #type: ignore
+import markdownlit
+from markdownlit import mdlit as mdlit
+import streamlit_toggle as stt
+from streamlit_pills_multiselect import pills
 import PyPDF2 #type: ignore
 from PyPDF2 import PdfMerger #type: ignore
 import glob
 import json
 from pyluach import parshios, dates
 
-
+#TODO: standardize parsha names (name, name2) (remove special parshios from file name)
 st.set_page_config(page_title="Dvar Creator (BETA)", page_icon="📚", layout="wide", initial_sidebar_state="collapsed")
-st.title("Dvar Creator 📚 (BETA)")
 
 options = webdriver.ChromeOptions()
 options.add_argument('--headless')
@@ -232,7 +235,6 @@ def parshaget(date1): #get parsha from date for shnayim mikra
 
 def shnayimget(session, parsha): #get shnayim mikra from github repo
     pdf_options = {}
-    #TODO: make search for parsha more robust by standardizing parsha names (name, name2) (remove special parshios from file name)
     parsha2= parsha.split(" ")
     parshaurl = []
     filename = []
@@ -282,7 +284,7 @@ def opttouse(opt, optconv): #sorts through options from opt to optconv, converti
             optconv.append('תניא יומי')
         elif i == 'Rambam (3)-Hebrew':
             optconv.append('רמב"ם - שלושה פרקים ליום')
-        elif i == 'Haftorah':
+        elif i == 'Haftorah' or i == 'Krias Hatorah (includes Haftorah)':
             optconv.append('חומש לקריאה בציבור')
         elif i == 'Project Likutei Sichos (Hebrew)':
             optconv.append('לקוטי שיחות')
@@ -337,6 +339,7 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
     pages = []
     pages2 = []
     pages3 = []
+    kriahattatch = False
     #st.write(optconv)
     if source == True:
         try:
@@ -373,8 +376,8 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
                     doc_out.insert_pdf(fitz.open(f"Hayom{session}.pdf"))
                 elif option == 'Shnayim Mikra':
                     doc_out.insert_pdf(fitz.open(f"Shnayim{session}.pdf"))
-                if all(option not in chabadoptions for option in opt) and any(option in opt for option in ['Project Likutei Sichos', 'Maamarim', 'Haftorah']):
-                    st.error("Project Likutei Sichos, the Haftorah, and Maamarim are not available from Chabad.org. Please try again.")
+                if all(option not in chabadoptions for option in opt) and any(option in opt for option in ['Project Likutei Sichos', 'Maamarim', 'Haftorah', 'Krias Hatorah (includes Haftorah)']):
+                    st.error("Project Likutei Sichos, Kriah, the Haftorah, and Maamarim are not available from Chabad.org. Please try again.")
                     st.stop()
                 
     else:
@@ -440,14 +443,21 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
                         page_num_end = toc[i+1][2] - 3 #type: ignore
                         #print(page_num_end)
                         print("Torah reading found")
-                        for page_num in range(page_num_start, page_num_end):
-                            #print(page_num)
-                            page = pdf_reader.pages[page_num]
-                            text = page.extract_text()
-                            #print(text)
-                            if "ברכת הפטורה" in text or "xtd enk dxhtdd renyl" in text:
-                                doc_out.insert_pdf(doc, from_page=page_num, to_page=page_num_end) #type: ignore
-                                continue
+                        if "Krias Hatorah (includes Haftorah)" in opt and kriahattatch == False:
+                            print("Kriah found")
+                            doc_out.insert_pdf(doc, from_page=page_num_start, to_page=page_num_end)
+                            kriahattatch = True
+                        elif 'Haftorah' in opt and 'Krias Hatorah (includes Haftorah)' not in opt:    
+                            for page_num in range(page_num_start, page_num_end):
+                                print("Haftorah found")
+                                #print(page_num)
+                                page = pdf_reader.pages[page_num]
+                                text = page.extract_text()
+                                #print(text)
+                                if "ברכת הפטורה" in text or "xtd enk dxhtdd renyl" in text:
+                                    doc_out.insert_pdf(doc, from_page=page_num, to_page=page_num_end) #type: ignore
+                                    continue
+                        
             if 'Rambam' in q:
                 #st.write("Appending Rambam")
                 doc_out.insert_pdf(fitz.open(f"Rambam{session}.pdf")) 
@@ -472,21 +482,24 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
     doc_out.close()
 
 
-#TODO: add full kriah as options
+
 with st.form(key="dvarform", clear_on_submit=False): #streamlit form for user input
-    st.title("Printout Creator")
-    st.markdown("""This app is designed to create a printout for Chitas, Rambam, plus a few other things. To get the materials directly and support the original publishers, go to
-    <a href=https://dvarmalchus.org/>Dvar Malchus</a> and <a href=https://www.chabad.org/dailystudy/default_cdo/jewish/Daily-Study.htm/>Chabad.org</a>.
-    """, unsafe_allow_html=True)
-    st.markdown("Any major bugs noticed? Features that you'd like to see? Comments? Email me <a href=mailto:mkievman@outlook.com/>here.</a>", unsafe_allow_html=True)
+    st.title("Dvar Creator 📚 (BETA)")
+    markdownlit.mdlit("""This app is designed to create a printout for Chitas, Rambam, plus a few other things. To get the materials directly and support the original publishers, go to @(Dvar Malchus)(https://dvarmalchus.org/)
+    and @(🔥)(Chabad.org)(https://www.chabad.org/dailystudy/default_cdo/jewish/Daily-Study.htm/).
+    """)
     date1 = date.today().strftime('%Y, %-m, %-d')
     year, day, month = date1.split(", ")
     year, day, month = int(year), int(day), int(month)
-    parsha = parshios.getparsha_string(dates.GregorianDate(year, month, day), israel=False, hebrew=True)
+    parsha = parshios.getparsha_string(dates.GregorianDate(year, day, month), israel=False, hebrew=True)
+    #st.write(f"Today is {date1}. The parsha is {parsha}.")
     #parshaget(date1)
-    week = st.multiselect("Select which days of the week you would like to print. (Select as many as you'd like)", options=['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos'])
-    opt = st.multiselect('Select which materials you want.', options=['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom', 'Project Likutei Sichos (Hebrew)', 'Maamarim', 'Haftorah', 'Shnayim Mikra'])
-    source = st.checkbox('Try to use Dvar Malchus, or get from Chabad.org? If checked, sources from Dvar Malchus will attempt to be used.', value=True)
+    week = pills("Select which days of the week you would like to print.", options=['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos'], multiselect=True, clearable=True, index=None)
+    st.write("Select which materials you would like to print. (Select as many as you'd like!)")
+    basics = pills('Basics:', options=['Chumash', 'Tanya', 'Hayom Yom'], multiselect=True, clearable=True, index=None)
+    rambamopts = pills('Rambam:', options=['Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English'], multiselect=True, clearable=True, index=None)
+    extras = pills('MISC:', options=['Project Likutei Sichos (Hebrew)', 'Maamarim', 'Krias Hatorah (includes Haftorah)', 'Haftorah', 'Shnayim Mikra'], multiselect=True, clearable=True, index=None)
+    source = stt.st_toggle_switch(label ='Try to use Dvar Malchus, or get from Chabad.org? If toggled on (green), it will attempt to get from Dvar Malchus.', default_value=True, label_after=True, inactive_color='#780c21', active_color='#0c7822', track_color='#0c4c78')  
     with st.expander("Advanced Options"):
         cover = st.checkbox('Include the cover page from Dvar Malchus?', value=False)
         scaleslide = st.slider('Change the scale of Chumash and Tanya from Chabad.Org. Default is 100%.', 30, 100, 100)
@@ -506,9 +519,12 @@ if not submit_button:
 if submit_button: #if the user submits the form, run the following code, which will create the pdf using above functions
     if id not in st.session_state:
         st.session_state['id'] = dt.now()
+    opt = basics + rambamopts + extras
+    print(opt)
     session = st.session_state.id
     weekorder = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos']
-    optorder = ['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom', 'Project Likutei Sichos (Hebrew)', 'Maamarim', 'Haftorah', 'Shnayim Mikra']
+    optorder = ['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom', 'Project Likutei Sichos (Hebrew)', 'Maamarim', 'Haftorah', 'Krias Hatorah (includes Haftorah)', 'Shnayim Mikra']
+    daydependent = ['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom']
     chabadoptions = ['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom']
     dow = []
     optconv = []
@@ -516,12 +532,20 @@ if submit_button: #if the user submits the form, run the following code, which w
     week = sorted(week, key=weekorder.index)
     opt = sorted(opt, key=optorder.index)
     #st.write(opt)
+    
     daytoheb(week, dow)
     opttouse(opt, optconv)
     daytorambam(week, dor)
     print(optconv)
+    print(source)
+    if week == [] and any(x in opt for x in daydependent)==True:
+        st.error("Please select at least one day of the week if trying to select anything from the 'Basics' or 'Rambam' sections.")
+        st.stop()
+    if week == [] and 'חומש לקריאה בציבור' in optconv or 'מאמרים' in optconv or 'לקוטי שיחות' in optconv or 'Shnayim Mikra' in optconv:
+        week = ['Sunday']
+    print(week)
     if source == True:
-        if 'Chumash' in opt or 'Tanya' in opt or 'Haftorah' in opt or 'Rambam (3)-Hebrew' in opt or 'Project Likutei Sichos (Hebrew)' in opt or 'Maamarim' in opt:
+        if 'Chumash' in opt or 'Tanya' in opt or 'Haftorah' in opt or 'Rambam (3)-Hebrew' in opt or 'Project Likutei Sichos (Hebrew)' in opt or 'Maamarim' in opt or 'Krias Hatorah (includes Haftorah)' in opt:
             if os.path.exists(f"{session}.pdf") == False:
                 try:
                     with st.spinner('Attempting to download Dvar Malchus...'):
@@ -631,5 +655,5 @@ if submit_button: #if the user submits the form, run the following code, which w
             if dt.now() - file_datetime > timedelta(minutes=1):
                 if file != f'output_dynamic{session}.pdf':
                     os.remove(file)
-
+markdownlit.mdlit("Any major bugs noticed? Features that you'd like to see? Comments? Email me @(📧)(here!)(mailto:mkievman@outlook.com)")
 
