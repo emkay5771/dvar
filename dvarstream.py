@@ -519,7 +519,19 @@ if not submit_button:
 if submit_button: #if the user submits the form, run the following code, which will create the pdf using above functions
     if id not in st.session_state:
         st.session_state['id'] = dt.now()
-    opt = basics + rambamopts + extras
+    opt = []
+    
+    try:
+        if len(basics) > 0:
+            opt += basics
+
+        if len(rambamopts) > 0:
+            opt += rambamopts
+
+        if len(extras) > 0:
+            opt += extras
+    except:
+        pass
     print(opt)
     session = st.session_state.id
     weekorder = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos']
