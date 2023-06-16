@@ -495,6 +495,7 @@ with st.form(key="dvarform", clear_on_submit=False): #streamlit form for user in
     #parshaget(date1)
     week = pills("Select which days of the week you would like to print.", options=['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos'], multiselect=True, clearable=True, index=None)
     st.write("**Select which materials you would like to print.** (Select as many as you'd like!)")
+    #TODO: add tehillim and rename to "Chitas"
     basics = pills('Basics:', options=['Chumash', 'Tanya', 'Hayom Yom'], multiselect=True, clearable=True, index=None)
     rambamopts = pills('Rambam:', options=['Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English'], multiselect=True, clearable=True, index=None)
     extras = pills('MISC:', options=['Project Likutei Sichos (Hebrew)', 'Maamarim', 'Krias Hatorah (includes Haftorah)', 'Haftorah', 'Shnayim Mikra'], multiselect=True, clearable=True, index=None)
@@ -663,5 +664,5 @@ if submit_button: #if the user submits the form, run the following code, which w
             if dt.now() - file_datetime > timedelta(minutes=1):
                 if file != f'output_dynamic{session}.pdf':
                     os.remove(file)
-markdownlit.mdlit("**Any major bugs noticed? Features that you'd like to see? Comments? Email me @(📧)([red]here![/red])(mailto:mkievman@outlook.com)**")
+markdownlit.mdlit("**Any major bugs noticed? Features that you'd like to see? Comments? Email me [📧 here!](mailto:mkievman@outlook.com)**")
 
