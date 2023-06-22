@@ -41,7 +41,7 @@ service = Service(chrome_driver_path)
 driver = webdriver.Chrome(service=service, options=options)
 #driver = webdriver.Chrome(executable_path=chrome_driver_path, options=options)
 
-def dvarget(session): # attempts to retrieve dvar malchus pdf
+def dvarget(session2): # attempts to retrieve dvar malchus pdf
     driver = webdriver.Chrome(options=options)
     driver.get("https://dvarmalchus.org")
     xpaths = [
@@ -90,7 +90,7 @@ def dvarget(session): # attempts to retrieve dvar malchus pdf
     for file in files:
         if file.endswith(".pdf") and sessionyear not in file:  # check if the file is a pdf and does not contain the session variable
             print("renaming " + file)
-            os.rename(os.path.join("", file), os.path.join("", f"dvar{session}.pdf"))
+            os.rename(os.path.join("", file), os.path.join("", f"dvar{session2}.pdf"))
 
     driver.quit()
 
@@ -343,7 +343,7 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
     if source == True:
         try:
             #st.write(f"opening dvar{session}.pdf")
-            doc = fitz.open(f"dvar{session}.pdf")
+            doc = fitz.open(f"dvar{session2}.pdf")
             #st.write("opened dvar")
             toc = doc.get_toc()
             #st.write("got toc")
@@ -418,7 +418,7 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
                     #print(item)
                     if item[1] == 'לקוטי שיחות' and q == 'לקוטי שיחות':
                         print("Likutei Sichos found")
-                        pdf_file = open(f"dvar{session}.pdf", "rb")
+                        pdf_file = open(f"dvar{session2}.pdf", "rb")
                         pdf_reader = PyPDF2.PdfReader(pdf_file)
                         page_num_start = item[2] - 1
                         print(page_num_start)
@@ -427,7 +427,7 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
                         doc_out.insert_pdf(doc, from_page=page_num_start, to_page=page_num_end) #type: ignore
                     if item[1] == 'מאמרים' and q == 'מאמרים':
                         print("Maamarim found")
-                        pdf_file = open(f"dvar{session}.pdf", "rb")
+                        pdf_file = open(f"dvar{session2}.pdf", "rb")
                         pdf_reader = PyPDF2.PdfReader(pdf_file)
                         page_num_start = item[2] - 1
                         print(page_num_start)
@@ -435,7 +435,7 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
                         print(page_num_end)
                         doc_out.insert_pdf(doc, from_page=page_num_start, to_page=page_num_end) #type: ignore
                     if item[1] == 'חומש לקריאה בציבור' and q == 'חומש לקריאה בציבור':
-                        pdf_file = open(f"dvar{session}.pdf", "rb")
+                        pdf_file = open(f"dvar{session2}.pdf", "rb")
                         pdf_reader = PyPDF2.PdfReader(pdf_file)
                         page_num_start = item[2] - 1
                         #print(page_num_start)
@@ -481,12 +481,19 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
     doc_out.close()
 
 
+@st.cache_data
+def dateset():
+    session2 = dt.now()
+    print(f"Dvar Session: {session2}")
+    return session2
 
 with st.form(key="dvarform", clear_on_submit=False): #streamlit form for user input
     st.title("Dvar Creator 📚 (BETA)")
     markdownlit.mdlit("""This app is designed to create a printout for Chitas, Rambam, plus a few other things. To get the materials directly and support the original publishers, go to @(**[blue]Dvar Malchus[/blue]**)(https://dvarmalchus.org/)
     and @(🔥)(**[orange]Chabad.org[/orange]**)(https://www.chabad.org/dailystudy/default_cdo/jewish/Daily-Study.htm/).
     """)
+    session2 = dateset()
+    print(f"test {session2}")
     date1 = date.today().strftime('%Y, %-m, %-d')
     year, day, month = date1.split(", ")
     year, day, month = int(year), int(day), int(month)
@@ -530,7 +537,9 @@ if submit_button: #if the user submits the form, run the following code, which w
     except:
         pass
     print(opt)
-    session = st.session_state.id
+    session = st.session_state['id']
+    st.write(session2)
+    #st.write(session)
     weekorder = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos']
     optorder = ['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom', 'Project Likutei Sichos (Hebrew)', 'Maamarim', 'Haftorah', 'Krias Hatorah (includes Haftorah)', 'Shnayim Mikra']
     daydependent = ['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom']
@@ -555,10 +564,10 @@ if submit_button: #if the user submits the form, run the following code, which w
     print(week)
     if source == True:
         if 'Chumash' in opt or 'Tanya' in opt or 'Haftorah' in opt or 'Rambam (3)-Hebrew' in opt or 'Project Likutei Sichos (Hebrew)' in opt or 'Maamarim' in opt or 'Krias Hatorah (includes Haftorah)' in opt:
-            if os.path.exists(f"{session}.pdf") == False:
+            if os.path.exists(f"dvar{session2}.pdf") == False:
                 try:
                     with st.spinner('Attempting to download Dvar Malchus...'):
-                        dvarget(session)
+                        dvarget(session2)
                 except:
                     st.write("Dvar Malchus not found. Using Chabad.org...")
                     source = False
@@ -579,7 +588,7 @@ if submit_button: #if the user submits the form, run the following code, which w
             if 'Rambam (3)-Bilingual' in opt or 'Rambam (3)-English' in opt or 'Rambam (1)-Bilingual' in opt or 'Rambam (1)-English' in opt or 'Rambam (1)-Hebrew' in opt:
                 #st.write("getting rambam")
                 rambamenglish(dor, session, opt)
-            elif 'Rambam (3)-Hebrew' in opt and os.path.exists(f"dvar{session}.pdf") == False:
+            elif 'Rambam (3)-Hebrew' in opt and os.path.exists(f"dvar{session2}.pdf") == False:
                 rambamenglish(dor, session, opt)
         
         if 'Hayom Yom' in opt:
@@ -632,16 +641,16 @@ if submit_button: #if the user submits the form, run the following code, which w
                 if file != f'Tanya{session}.pdf':
                     os.remove(file)
 
-    if glob.glob("dvar*.pdf"):
-        for file in glob.glob("dvar*.pdf"):
+    #if glob.glob("dvar*.pdf"):
+        #for file in glob.glob("dvar*.pdf"):
             # remove the prefix "flights" and the suffix ".csv" from the file name
-            timestamp = file.lstrip("dvar").rstrip(".pdf")
+            #timestamp = file.lstrip("dvar").rstrip(".pdf")
             # parse the timestamp using the format string "%Y-%m-%d %H:%M:%S.%f"
-            file_datetime = dt.strptime(timestamp, "%Y-%m-%d %H:%M:%S.%f")
+            #file_datetime = dt.strptime(timestamp, "%Y-%m-%d %H:%M:%S.%f")
             # check if the file is older than 10 minutes
-            if dt.now() - file_datetime > timedelta(minutes=1):
-                if file != f'dvar{session}.pdf':
-                    os.remove(file)
+            #if dt.now() - file_datetime > timedelta(minutes=1):
+                #if file != f'dvar{session}.pdf':
+                    #os.remove(file)
     
     if glob.glob('Shnayim*.pdf'):
         for file in glob.glob('Shnayim*.pdf'):
