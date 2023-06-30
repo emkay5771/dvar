@@ -284,6 +284,7 @@ def opttouse(opt, optconv): #sorts through options from opt to optconv, converti
         elif i == 'Rambam (3)-Hebrew':
             optconv.append('רמב"ם - שלושה פרקים ליום')
         elif i == 'Haftorah' or i == 'Krias Hatorah (includes Haftorah)':
+            print("appended haftorah")
             optconv.append('חומש לקריאה בציבור')
         elif i == 'Project Likutei Sichos (Hebrew)':
             optconv.append('לקוטי שיחות')
@@ -527,18 +528,25 @@ if submit_button: #if the user submits the form, run the following code, which w
     opt = []
     try:
         if len(basics) > 0:
+            print("appending selected basics")
             opt += basics
-
+    except:
+        pass
+    try:
         if len(rambamopts) > 0:
+            print("appending selected rambam")
             opt += rambamopts
-
+    except:
+        pass
+    try:
         if len(extras) > 0:
+            print("appending selected extras")
             opt += extras
     except:
         pass
     print(opt)
     session = st.session_state['id']
-    st.write(session2)
+    #st.write(session2)
     #st.write(session)
     weekorder = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos']
     optorder = ['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom', 'Project Likutei Sichos (Hebrew)', 'Maamarim', 'Haftorah', 'Krias Hatorah (includes Haftorah)', 'Shnayim Mikra']
@@ -547,20 +555,28 @@ if submit_button: #if the user submits the form, run the following code, which w
     dow = []
     optconv = []
     dor = []
-    week = sorted(week, key=weekorder.index)
     opt = sorted(opt, key=optorder.index)
+    try:
+        week = sorted(week, key=weekorder.index)
+        daytoheb(week, dow)
+        daytorambam(week, dor)
+    except:
+        pass
+    
     #st.write(opt)
     
-    daytoheb(week, dow)
+    
     opttouse(opt, optconv)
-    daytorambam(week, dor)
+    
     print(optconv)
     print(source)
     if week == [] and any(x in opt for x in daydependent)==True:
         st.error("Please select at least one day of the week if trying to select anything from the 'Basics' or 'Rambam' sections.")
         st.stop()
     if week == [] and 'חומש לקריאה בציבור' in optconv or 'מאמרים' in optconv or 'לקוטי שיחות' in optconv or 'Shnayim Mikra' in optconv:
+        #st.write("appending sunday")
         week = ['Sunday']
+        print(optconv)
     print(week)
     if source == True:
         if 'Chumash' in opt or 'Tanya' in opt or 'Haftorah' in opt or 'Rambam (3)-Hebrew' in opt or 'Project Likutei Sichos (Hebrew)' in opt or 'Maamarim' in opt or 'Krias Hatorah (includes Haftorah)' in opt:
