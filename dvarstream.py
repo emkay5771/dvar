@@ -417,24 +417,28 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
                 for i, item in enumerate(toc): #type: ignore
                     #st.write(item)
                     #print(item)
-                    if item[1] == 'לקוטי שיחות' and q == 'לקוטי שיחות':
-                        print("Likutei Sichos found")
-                        pdf_file = open(f"dvar{session}.pdf", "rb")
-                        pdf_reader = PyPDF2.PdfReader(pdf_file)
-                        page_num_start = item[2] - 1
-                        print(page_num_start)
-                        page_num_end = find_next_top_level_bookmark(toc, i) #type: ignore
-                        print(page_num_end)
-                        doc_out.insert_pdf(doc, from_page=page_num_start, to_page=page_num_end) #type: ignore
-                    if item[1] == 'מאמרים' and q == 'מאמרים':
-                        print("Maamarim found")
-                        pdf_file = open(f"dvar{session}.pdf", "rb")
-                        pdf_reader = PyPDF2.PdfReader(pdf_file)
-                        page_num_start = item[2] - 1
-                        print(page_num_start)
-                        page_num_end = find_next_top_level_bookmark(toc, i) #type: ignore
-                        print(page_num_end)
-                        doc_out.insert_pdf(doc, from_page=page_num_start, to_page=page_num_end) #type: ignore
+                    if q == 'לקוטי שיחות':
+                        for word in item[1].split():
+                            if word == 'לקוטי' and item[1].split()[item[1].split().index(word) + 1] == 'שיחות':
+                                print("Likutei Sichos found")
+                                pdf_file = open(f"dvar{session}.pdf", "rb")
+                                pdf_reader = PyPDF2.PdfReader(pdf_file)
+                                page_num_start = item[2] - 1
+                                print(page_num_start)
+                                page_num_end = find_next_top_level_bookmark(toc, i) #type: ignore
+                                print(page_num_end)
+                                doc_out.insert_pdf(doc, from_page=page_num_start, to_page=page_num_end) #type: ignore
+                    if q == 'מאמרים':
+                        for word in item[1].split():
+                            if word == 'מאמר':
+                                print("Maamarim found")
+                                pdf_file = open(f"dvar{session}.pdf", "rb")
+                                pdf_reader = PyPDF2.PdfReader(pdf_file)
+                                page_num_start = item[2] - 1
+                                print(page_num_start)
+                                page_num_end = find_next_top_level_bookmark(toc, i) #type: ignore
+                                print(page_num_end)
+                                doc_out.insert_pdf(doc, from_page=page_num_start, to_page=page_num_end) #type: ignore
                     if item[1] == 'חומש לקריאה בציבור' and q == 'חומש לקריאה בציבור':
                         pdf_file = open(f"dvar{session}.pdf", "rb")
                         pdf_reader = PyPDF2.PdfReader(pdf_file)
