@@ -41,7 +41,7 @@ service = Service(chrome_driver_path)
 driver = webdriver.Chrome(service=service, options=options)
 #driver = webdriver.Chrome(executable_path=chrome_driver_path, options=options)
 
-def dvarget(session): # attempts to retrieve dvar malchus pdf
+def dvarget(session2): # attempts to retrieve dvar malchus pdf
     driver = webdriver.Chrome(options=options)
     driver.get("https://dvarmalchus.org")
     xpaths = [
@@ -90,7 +90,7 @@ def dvarget(session): # attempts to retrieve dvar malchus pdf
     for file in files:
         if file.endswith(".pdf") and sessionyear not in file:  # check if the file is a pdf and does not contain the session variable
             print("renaming " + file)
-            os.rename(os.path.join("", file), os.path.join("", f"dvar{session}.pdf"))
+            os.rename(os.path.join("", file), os.path.join("", f"dvar{session2}.pdf"))
 
     driver.quit()
 
@@ -344,7 +344,7 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
     if source == True:
         try:
             #st.write(f"opening dvar{session}.pdf")
-            doc = fitz.open(f"dvar{session}.pdf")
+            doc = fitz.open(f"dvar{session2}.pdf")
             #st.write("opened dvar")
             toc = doc.get_toc()
             #st.write("got toc")
@@ -421,7 +421,7 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
                         for word in item[1].split():
                             if word == 'לקוטי' and item[1].split()[item[1].split().index(word) + 1] == 'שיחות':
                                 print("Likutei Sichos found")
-                                pdf_file = open(f"dvar{session}.pdf", "rb")
+                                pdf_file = open(f"dvar{session2}.pdf", "rb")
                                 pdf_reader = PyPDF2.PdfReader(pdf_file)
                                 page_num_start = item[2] - 1
                                 print(page_num_start)
@@ -432,7 +432,7 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
                         for word in item[1].split():
                             if word == 'מאמר':
                                 print("Maamarim found")
-                                pdf_file = open(f"dvar{session}.pdf", "rb")
+                                pdf_file = open(f"dvar{session2}.pdf", "rb")
                                 pdf_reader = PyPDF2.PdfReader(pdf_file)
                                 page_num_start = item[2] - 1
                                 print(page_num_start)
@@ -440,7 +440,7 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
                                 print(page_num_end)
                                 doc_out.insert_pdf(doc, from_page=page_num_start, to_page=page_num_end) #type: ignore
                     if item[1] == 'חומש לקריאה בציבור' and q == 'חומש לקריאה בציבור':
-                        pdf_file = open(f"dvar{session}.pdf", "rb")
+                        pdf_file = open(f"dvar{session2}.pdf", "rb")
                         pdf_reader = PyPDF2.PdfReader(pdf_file)
                         page_num_start = item[2] - 1
                         #print(page_num_start)
@@ -486,7 +486,7 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
     doc_out.close()
 
 
-@st.cache_data
+@st.cache_data(ttl="12h")
 def dateset():
     session2 = dt.now()
     print(f"Session: {session2}")
@@ -523,6 +523,7 @@ with st.form(key="dvarform", clear_on_submit=False): #streamlit form for user in
         scaleslide3 = st.slider('Change the scale of Hayom Yom from Chabad.Org. Default is 80%.', 30, 100, 80)
         st.write("Scale is", scaleslide3,"%")
         scale3 = scaleslide3/100
+        
 
     submit_button = st.form_submit_button(label="Generate PDF ▶️")
 
@@ -584,10 +585,10 @@ if submit_button: #if the user submits the form, run the following code, which w
     print(week)
     if source == True:
         if 'Chumash' in opt or 'Tanya' in opt or 'Haftorah' in opt or 'Rambam (3)-Hebrew' in opt or 'Project Likutei Sichos (Hebrew)' in opt or 'Maamarim' in opt or 'Krias Hatorah (includes Haftorah)' in opt:
-            if os.path.exists(f"{session}.pdf") == False:
+            if os.path.exists(f"dvar{session2}.pdf") == False:
                 try:
                     with st.spinner('Attempting to download Dvar Malchus...'):
-                        dvarget(session)
+                        dvarget(session2)
                 except:
                     st.write("Dvar Malchus not found. Using Chabad.org...")
                     source = False
@@ -608,7 +609,7 @@ if submit_button: #if the user submits the form, run the following code, which w
             if 'Rambam (3)-Bilingual' in opt or 'Rambam (3)-English' in opt or 'Rambam (1)-Bilingual' in opt or 'Rambam (1)-English' in opt or 'Rambam (1)-Hebrew' in opt:
                 #st.write("getting rambam")
                 rambamenglish(dor, session, opt)
-            elif 'Rambam (3)-Hebrew' in opt and os.path.exists(f"dvar{session}.pdf") == False:
+            elif 'Rambam (3)-Hebrew' in opt and os.path.exists(f"dvar{session2}.pdf") == False:
                 rambamenglish(dor, session, opt)
         
         if 'Hayom Yom' in opt:
@@ -668,8 +669,8 @@ if submit_button: #if the user submits the form, run the following code, which w
             # parse the timestamp using the format string "%Y-%m-%d %H:%M:%S.%f"
             file_datetime = dt.strptime(timestamp, "%Y-%m-%d %H:%M:%S.%f")
             # check if the file is older than 10 minutes
-            if dt.now() - file_datetime > timedelta(minutes=1):
-                if file != f'dvar{session}.pdf':
+            if dt.now() - file_datetime > timedelta(hours=14):
+                if file != f'dvar{session2}.pdf':
                     os.remove(file)
     
     if glob.glob('Shnayim*.pdf'):
@@ -695,3 +696,10 @@ if submit_button: #if the user submits the form, run the following code, which w
                     os.remove(file)
 markdownlit.mdlit("**Any major bugs noticed? Features that you'd like to see? Comments? Email me [📧 here!](mailto:mkievman@outlook.com)**")
 
+if not submit_button:
+    with st.expander("**Changelog:**"):
+        markdownlit.mdlit("**New in latest update (7-17-23)**: <br/> **1:** Repeated compilations of materials should be considerably faster. <br/> **2:** Fixes to maamarim and sichos to fail less often.")
+if submit_button:
+    if os.path.exists(f"output_dynamic{session}.pdf"):
+        with st.expander("NOTE: If you are reciving last weeks materials, please click here."):
+            newtime= st.button("Clear Cached Time", on_click=dateset.clear)
