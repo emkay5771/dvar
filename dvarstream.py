@@ -232,7 +232,7 @@ def parshaget(date1): #get parsha from date for shnayim mikra
     st.write(f"This week's parsha is {parsha}.")
     return parsha
 
-def shnayimget(session, parsha): #get shnayim mikra from github repo
+def shnayimget(session2, parsha): #get shnayim mikra from github repo
     pdf_options = {}
     parsha2= parsha.split(" ")
     parshaurl = []
@@ -246,7 +246,7 @@ def shnayimget(session, parsha): #get shnayim mikra from github repo
         filename2 = " ".join(filename)
         #print(parshaurl)
     print(parshaurl2)
-    if os.path.exists(f"Shnayim{session}.pdf") != True:
+    if os.path.exists(f"Shnayim{session2}.pdf") != True:
         if 'Shnayim Mikra' in opt:
             driver = webdriver.Chrome(options=options)
             driver.get(f"https://github.com/emkay5771/shnayimfiles/blob/master/{parshaurl2}.pdf?raw=true")
@@ -255,7 +255,7 @@ def shnayimget(session, parsha): #get shnayim mikra from github repo
             driver.quit()
             if os.path.exists(f"{filename2}.pdf") == True:
                 print(f"file exists {filename2}")
-                os.rename(f"{filename2}.pdf", f"Shnayim{session}.pdf")
+                os.rename(f"{filename2}.pdf", f"Shnayim{session2}.pdf")
 
 def daytoheb(week, dow): #converts day of week from week in streamlit to hebrew date, to be used when parsing dvar malchus
     for i in week:
@@ -375,7 +375,7 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
                 elif option == 'Hayom Yom':
                     doc_out.insert_pdf(fitz.open(f"Hayom{session}.pdf"))
                 elif option == 'Shnayim Mikra':
-                    doc_out.insert_pdf(fitz.open(f"Shnayim{session}.pdf"))
+                    doc_out.insert_pdf(fitz.open(f"Shnayim{session2}.pdf"))
                 if all(option not in chabadoptions for option in opt) and any(option in opt for option in ['Project Likutei Sichos', 'Maamarim', 'Haftorah', 'Krias Hatorah (includes Haftorah)']):
                     st.error("Project Likutei Sichos, Kriah, the Haftorah, and Maamarim are not available from Chabad.org. Please try again.")
                     st.stop()
@@ -478,7 +478,7 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
             if q == 'Shnayim Mikra':
                 print("Shnayim Mikra found")
                 #st.write("Appending Shnayim Mikra")
-                doc_out.insert_pdf(fitz.open(f"Shnayim{session}.pdf")) 
+                doc_out.insert_pdf(fitz.open(f"Shnayim{session2}.pdf")) 
                 print("Appended")
                 continue
                        
@@ -618,7 +618,7 @@ if submit_button: #if the user submits the form, run the following code, which w
             hayomyom(dor, session)
 
         if 'Shnayim Mikra' in opt:
-            shnayimget(session, parsha) 
+            shnayimget(session2, parsha) 
 
         dynamicmake(dow, optconv, opt, source, session)
 
@@ -680,8 +680,8 @@ if submit_button: #if the user submits the form, run the following code, which w
             # parse the timestamp using the format string "%Y-%m-%d %H:%M:%S.%f"
             file_datetime = dt.strptime(timestamp, "%Y-%m-%d %H:%M:%S.%f")
             # check if the file is older than 10 minutes
-            if dt.now() - file_datetime > timedelta(minutes=1):
-                if file != f'Shnayim{session}.pdf':
+            if dt.now() - file_datetime > timedelta(hours=14):
+                if file != f'Shnayim{session2}.pdf':
                     os.remove(file)
     
     if glob.glob("output_dynamic*.pdf"):
@@ -698,7 +698,7 @@ markdownlit.mdlit("**Any major bugs noticed? Features that you'd like to see? Co
 
 if not submit_button:
     with st.expander("**Changelog:**"):
-        markdownlit.mdlit("**New in latest update (7-17-23)**: <br/> **1:** Repeated compilations of materials should be considerably faster. <br/> **2:** Fixes to maamarim and sichos to fail less often.")
+        markdownlit.mdlit("**New in latest update (7-17-23)**: <br/> **1:** Repeated compilations of materials from Dvar Malchus should be considerably faster. <br/> **2:** Shnayim mikra gets considerably faster on subsequent reruns. <br/> **3:** Fixes to maamarim and sichos to fail less often.")
 if submit_button:
     if os.path.exists(f"output_dynamic{session}.pdf"):
         with st.expander("NOTE: If you are reciving last weeks materials, please click here."):
