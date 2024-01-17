@@ -699,7 +699,8 @@ markdownlit.mdlit("**Any major bugs noticed? Features that you'd like to see? Co
 
 if not submit_button:
     with st.expander("**Changelog:**"):
-        markdownlit.mdlit("**New in latest update (7-17-23)**: <br/> **1:** Repeated compilations of materials from Dvar Malchus should be considerably faster. <br/> **2:** Shnayim mikra gets considerably faster on subsequent reruns. <br/> **3:** Fixes to maamarim and sichos to fail less often.")
+        markdownlit.mdlit("**New in latest update (1-17-24)**: <br/> **[FIX]** Updated location of Dvar Malchus download button.")
+        markdownlit.mdlit("**Past Changes (7-17-23)**: <br/> **1:** Repeated compilations of materials from Dvar Malchus should be considerably faster. <br/> **2:** Shnayim mikra gets considerably faster on subsequent reruns. <br/> **3:** Fixes to maamarim and sichos to fail less often.")
 if submit_button:
     if os.path.exists(f"output_dynamic{session}.pdf"):
         with st.expander("NOTE: If you are reciving last weeks materials, please click here."):
