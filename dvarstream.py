@@ -48,8 +48,8 @@ def dvarget(session2): # attempts to retrieve dvar malchus pdf
     driver.get("https://dvarmalchus.org")
     print("Dvar Malchus Opened")
     xpaths = [
-        "/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div/div/div/a/span/span[2]"
-        "/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div"
+        "/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div/div/div/a/span/span[2]",
+        "/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div",
         "/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div/div/div",
         '/html/body/div[1]/section[2]/div[3]/div/div/div[3]/div/div/a',
         '/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div[1]/div/div/a',
