@@ -502,7 +502,7 @@ def dateset():
 
 with st.form(key="dvarform", clear_on_submit=False): #streamlit form for user input
     st.title("Dvar Creator 📚 (BETA)")
-    st.info("Check out Chitas Collator, a fork of this app optimized for multiple weeks! [📖 Chitas Collator](https://chitas-collator.streamlit.app/)")
+    st.info("Need more than 1 week at a time? Check out 📖[Chitas Collator](https://chitas-collator.streamlit.app/)!")
     markdownlit.mdlit("""This app is designed to create a printout for Chitas, Rambam, plus a few other things. To get the materials directly and support the original publishers, go to @(**[blue]Dvar Malchus[/blue]**)(https://dvarmalchus.org/)
     and @(🔥)(**[orange]Chabad.org[/orange]**)(https://www.chabad.org/dailystudy/default_cdo/jewish/Daily-Study.htm/).
     """)
