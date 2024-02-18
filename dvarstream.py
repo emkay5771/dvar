@@ -22,7 +22,6 @@ from PyPDF2 import PdfMerger #type: ignore
 import glob
 import json
 from pyluach import parshios, dates
-import pandas as pd
 
 st.set_page_config(page_title="Dvar Creator (BETA)", page_icon="📚", layout="wide", initial_sidebar_state="collapsed")
 
@@ -41,6 +40,67 @@ chrome_driver_path = "/usr/bin/chromedriver"
 service = Service(chrome_driver_path)
 driver = webdriver.Chrome(service=service, options=options)
 #driver = webdriver.Chrome(executable_path=chrome_driver_path, options=options)
+
+def dvarget(session2): # attempts to retrieve dvar malchus pdf
+    print("Dvarget Running")
+    driver = webdriver.Chrome(options=options)
+    print("Driver Opened")
+    driver.get("https://dvarmalchus.org")
+    print("Dvar Malchus Opened")
+    xpaths = [
+        "/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div/div/div/a/span/span[2]",
+        "/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div",
+        "/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div/div/div",
+        '/html/body/div[1]/section[2]/div[3]/div/div/div[3]/div/div/a',
+        '/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div[1]/div/div/a',
+        "/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div[2]/div/div/a",
+        '/html/body/div[1]/section[9]/div/div/div/div[3]/div/div/div/div[1]/div/section/div/div/div/section/div/div/div/div/div/div/a',
+        '/html/body/div[1]/section[9]/div/div/div/div[3]/div/div/div/div[2]/div/section/div/div/div/section/div/div/div/div/div/div/a'
+    ]
+    for each in xpaths:
+        try:
+            link_text = driver.find_element(By.XPATH, f"{each}/span/span[2]").text
+            #st.write(link_text)
+            if link_text == "להורדת החוברת השבועית" :
+                #st.write(f"clicking {each}")
+                print(f"clicking {each}")
+                url = driver.find_element(By.XPATH, each).get_attribute("href")
+                driver.get(url)
+                print(f"URL: {url}")
+                break
+            else:
+                if link_text != "להורדת החוברת השבועית - חו״ל":
+                    #st.write("skipping " + each)
+                    print("skipping " + each)
+                    continue
+                elif link_text == "להורדת החוברת השבועית - חו״ל":
+                    #st.write(f"clicking alternate {each}")
+                    print(f"clicking alternate {each}")
+                    url = driver.find_element(By.XPATH, each).get_attribute("href")
+                    print(url)
+                    driver.get(url)
+                    break
+        except:
+            #st.write("exception")
+            continue
+
+
+    driver.save_screenshot("dvar.png")
+    #st.write("screenshot saved")
+    print("waiting")
+    time.sleep(10)
+    os.remove("dvar.png")
+    #st.write("screenshot removed")
+
+    files = os.listdir()
+    
+    sessionyear = "2023"  # set the session variable to "2023"
+    for file in files:
+        if file.endswith(".pdf") and sessionyear not in file:  # check if the file is a pdf and does not contain the session variable
+            print("renaming " + file)
+            os.rename(os.path.join("", file), os.path.join("", f"dvar{session2}.pdf"))
+
+    driver.quit()
 
 def chabadget(dor, opt, session): # retrieves chumash and tanya from chabad.org
     pdf_options = {
@@ -247,23 +307,14 @@ def opttouse(opt, optconv): #sorts through options from opt to optconv, converti
     return optconv
         
 def daytorambam(week, dor): #converts day of week from week in streamlit to date format for chabad.org, for rambamenglish(), hayonyom(), and chabadget()
-    print("Day to Rambam Running")
     today = date.today()
     day_to_n = {'Monday': 0, 'Tuesday': 1, 'Wednesday': 2, 'Thursday': 3, 'Friday': 4, 'Shabbos': 5, 'Sunday': 6}
-    if week != []:
-        start_date=week[0]
-        end_date=week[-1]
-
-        # Calculate the number of days between the start and end dates
-        num_days = (end_date - start_date).days
-
-        # Generate the list of dates
-        date_list2 = [start_date + timedelta(days=i) for i in range(num_days +  1)]
-        print(date_list2)
-        for i in date_list2:
-            y, m, d = str(i).split("-")
-            dor.append(f'{m}%2F{d}%2F{y}')  
-            print(dor)
+    for i in week:
+        n = day_to_n[i]
+        print(n)
+        linkappend = today + relativedelta(weekday=n)
+        y, m, d = str(linkappend).split("-")
+        dor.append(f'{m}%2F{d}%2F{y}')
     return dor
 
 def find_next_top_level_bookmark(toc, current_index):
@@ -450,10 +501,9 @@ def dateset():
     return session2
 
 with st.form(key="dvarform", clear_on_submit=False): #streamlit form for user input
-    st.title("Chitas Collator 📖")
-    st.info("Welcome to the initial release of Chitas Collator 🥳! Note that this is less feature-rich than the original Dvar Maker, but is designed to allow for longer periods of time to be printed. If you have any feedback or suggestions, feel free to reach out!")
-    markdownlit.mdlit("""This app is designed to create a printout for Chitas and Rambam for extended periods of time. To get the materials directly and support the original publishers, go to @(🔥)(**[orange]Chabad.org[/orange]**)(https://www.chabad.org/dailystudy/default_cdo/jewish/Daily-Study.htm/). 
-                      For access to more materials (but only 1 week at a time), check out @(📚)(**Dvar Maker**)(https://dvarmaker.streamlit.app).
+    st.title("Dvar Creator 📚 (BETA)")
+    markdownlit.mdlit("""This app is designed to create a printout for Chitas, Rambam, plus a few other things. To get the materials directly and support the original publishers, go to @(**[blue]Dvar Malchus[/blue]**)(https://dvarmalchus.org/)
+    and @(🔥)(**[orange]Chabad.org[/orange]**)(https://www.chabad.org/dailystudy/default_cdo/jewish/Daily-Study.htm/).
     """)
     session2 = dateset()
     print(f"test {session2}")
@@ -463,15 +513,15 @@ with st.form(key="dvarform", clear_on_submit=False): #streamlit form for user in
     parsha = parshios.getparsha_string(dates.GregorianDate(year, day, month), israel=False, hebrew=True)
     #st.write(f"Today is {date1}. The parsha is {parsha}.")
     #parshaget(date1)
-    #week = pills("Select which days of the week you would like to print.", options=['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos'], multiselect=True, clearable=True, index=None)
-    week = st.date_input("Select which dates you would like to print:", value=[dt.today()], min_value=date.today(), max_value=None, key="week")
+    week = pills("Select which days of the week you would like to print.", options=['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos'], multiselect=True, clearable=True, index=None)
     st.write("**Select which materials you would like to print.** (Select as many as you'd like!)")
     #TODO: add tehillim and rename to "Chitas"
     basics = pills('Basics:', options=['Chumash', 'Tanya', 'Hayom Yom'], multiselect=True, clearable=True, index=None)
     rambamopts = pills('Rambam:', options=['Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English'], multiselect=True, clearable=True, index=None)
-    #extras = pills('MISC:', options=['Shnayim Mikra'], multiselect=True, clearable=True, index=None)
-    source = False
+    extras = pills('MISC:', options=['Project Likutei Sichos (Hebrew)', 'Maamarim', 'Krias Hatorah (includes Haftorah)', 'Haftorah', 'Shnayim Mikra'], multiselect=True, clearable=True, index=None)
+    source = stt.st_toggle_switch(label ='Try to use Dvar Malchus, or get from Chabad.org? If toggled on (green), it will attempt to get from Dvar Malchus.', default_value=True, label_after=True, inactive_color='#780c21', active_color='#0c7822', track_color='#0c4c78')  
     with st.expander("Advanced Options"):
+        cover = st.checkbox('Include the cover page from Dvar Malchus?', value=False)
         scaleslide = st.slider('Change the scale of Chumash and Tanya from Chabad.Org. Default is 100%.', 30, 100, 100)
         st.write("Scale is", scaleslide,"%")
         scale = scaleslide/100
@@ -482,6 +532,7 @@ with st.form(key="dvarform", clear_on_submit=False): #streamlit form for user in
         st.write("Scale is", scaleslide3,"%")
         scale3 = scaleslide3/100
         
+
     submit_button = st.form_submit_button(label="Generate PDF ▶️")
 
 if submit_button: #if the user submits the form, run the following code, which will create the pdf using above functions
@@ -519,13 +570,10 @@ if submit_button: #if the user submits the form, run the following code, which w
     dor = []
     opt = sorted(opt, key=optorder.index)
     try:
-        print("sorting week")
-        #week = sorted(week, key=weekorder.index)
-        #daytoheb(week, dow)
+        week = sorted(week, key=weekorder.index)
+        daytoheb(week, dow)
         daytorambam(week, dor)
-        print("week sorted")
     except:
-        print("no week")
         pass
     
     #st.write(opt)
@@ -543,16 +591,18 @@ if submit_button: #if the user submits the form, run the following code, which w
         week = ['Sunday']
         print(optconv)
     print(week)
-  
-
     if source == True:
         if 'Chumash' in opt or 'Tanya' in opt or 'Haftorah' in opt or 'Rambam (3)-Hebrew' in opt or 'Project Likutei Sichos (Hebrew)' in opt or 'Maamarim' in opt or 'Krias Hatorah (includes Haftorah)' in opt:
             if os.path.exists(f"dvar{session2}.pdf") == False:
-                with st.spinner('Getting your Chitas...'):
+                try:
+                    with st.spinner('Attempting to download Dvar Malchus...'):
+                        dvarget(session2)
+                except:
+                    st.write("Dvar Malchus not found. Using Chabad.org...")
                     source = False
                     cover = False
         else:
-            st.write("Getting your Chitas...")
+            st.write("Dvar Malchus not needed. Using Chabad.org...")
             source = False
             cover = False
     with st.spinner('Creating PDF...'):
@@ -655,9 +705,9 @@ if submit_button: #if the user submits the form, run the following code, which w
 markdownlit.mdlit("**Any major bugs noticed? Features that you'd like to see? Comments? Email me [📧 here!](mailto:mkievman@outlook.com)**")
 
 if not submit_button:
-    st.info('Future Roadmap: Add back "Extras" such as Shnayim Mikra and Kriah.')
     with st.expander("**Changelog:**"):
-        markdownlit.mdlit("**[LAUNCH]** (2-17-24): Initial Release of Chitas Collator")
+        markdownlit.mdlit("**New in latest update (1-17-24)**: <br/> **[FIX]** Updated location of Dvar Malchus download button.")
+        markdownlit.mdlit("**Past Changes (7-17-23)**: <br/> **1:** Repeated compilations of materials from Dvar Malchus should be considerably faster. <br/> **2:** Shnayim mikra gets considerably faster on subsequent reruns. <br/> **3:** Fixes to maamarim and sichos to fail less often.")
 if submit_button:
     if os.path.exists(f"output_dynamic{session}.pdf"):
         with st.expander("NOTE: If you are reciving last weeks materials, please click here."):
