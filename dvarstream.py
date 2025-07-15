@@ -702,9 +702,9 @@ if not submit_button:
 <br/> **[FIX]** Updated location of Dvar Malchus download button.
 
 **Past Changes (7-17-23)**: 
-<br/> **[NEW]** Repeated compilations of materials from Dvar Malchus should be considerably faster. 
-<br/> **[NEW]** Shnayim mikra gets considerably faster on subsequent reruns. 
-<br/> **[FIX]** Fixes to maamarim and sichos to fail less often.
+<br/> **1:** Repeated compilations of materials from Dvar Malchus should be considerably faster. 
+<br/> **2:** Shnayim mikra gets considerably faster on subsequent reruns. 
+<br/> **3:** Fixes to maamarim and sichos to fail less often.
 """)
 if submit_button:
     if os.path.exists(f"output_dynamic{session}.pdf"):
