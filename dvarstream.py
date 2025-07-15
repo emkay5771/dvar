@@ -232,32 +232,32 @@ def rambamenglish(dor, session, opt): # retrieves all rambam versions from chaba
     if not selected_rambam_options:
         return
 
-    driver = webdriver.Chrome(service=service, options=options)
-    try:
-        for selected_rambam_option in selected_rambam_options:
-            unique_filename = f"{selected_rambam_option.replace(' ', '_').replace('(', '').replace(')', '')}_{session}.pdf"
-            
-            if os.path.exists(unique_filename):
-                continue
+    for selected_rambam_option in selected_rambam_options:
+        unique_filename = f"{selected_rambam_option.replace(' ', '_').replace('(', '').replace(')', '')}_{session}.pdf"
+        
+        if os.path.exists(unique_filename):
+            continue
 
-            merger = PdfMerger()
-            temp_files_to_delete = []
+        merger = PdfMerger()
+        temp_files_to_delete = []
 
-            lang = ""
-            chapters = ""
-            if selected_rambam_option == "Rambam (3)-Bilingual":
-                    lang = "both"; chapters = "3"
-            elif selected_rambam_option == "Rambam (3)-Hebrew":
-                lang = "he"; chapters = "3"
-            elif selected_rambam_option == "Rambam (3)-English":
-                lang = "primary"; chapters = "3"
-            elif selected_rambam_option == "Rambam (1)-Bilingual":
-                lang = "both"; chapters = "1"
-            elif selected_rambam_option == "Rambam (1)-Hebrew":
-                lang = "he"; chapters = "1"
-            elif selected_rambam_option == "Rambam (1)-English":
-                lang = "primary"; chapters = "1"
+        lang = ""
+        chapters = ""
+        if selected_rambam_option == "Rambam (3)-Bilingual":
+                lang = "both"; chapters = "3"
+        elif selected_rambam_option == "Rambam (3)-Hebrew":
+            lang = "he"; chapters = "3"
+        elif selected_rambam_option == "Rambam (3)-English":
+            lang = "primary"; chapters = "3"
+        elif selected_rambam_option == "Rambam (1)-Bilingual":
+            lang = "both"; chapters = "1"
+        elif selected_rambam_option == "Rambam (1)-Hebrew":
+            lang = "he"; chapters = "1"
+        elif selected_rambam_option == "Rambam (1)-English":
+            lang = "primary"; chapters = "1"
 
+        driver = webdriver.Chrome(service=service, options=options)
+        try:
             for idx, i in enumerate(dor):
                 driver.get(f"https://www.chabad.org/dailystudy/rambam.asp?rambamchapters={chapters}&tdate={i}#lt={lang}")
                 wait = WebDriverWait(driver, 10)
@@ -282,8 +282,8 @@ def rambamenglish(dor, session, opt): # retrieves all rambam versions from chaba
             for f_path in temp_files_to_delete:
                 if os.path.exists(f_path):
                     os.remove(f_path)
-    finally:
-        driver.quit()
+        finally:
+            driver.quit()
 
 def hayomyom(dor, session): #gets hayom yom from chabad.org
     pdf_options = {
@@ -383,6 +383,8 @@ def opttouse(opt, optconv): #sorts through options from opt to optconv, converti
             optconv.append('תניא יומי')
         elif i == 'Rambam (3)-Hebrew':
             optconv.append('רמב"ם - שלושה פרקים ליום')
+        elif i == 'Rambam (1)-Hebrew':
+            optconv.append('רמב"ם - פרק אחד ליום')
         elif i == 'Haftorah' or i == 'Krias Hatorah (includes Haftorah)':
             print("appended haftorah")
             optconv.append('חומש לקריאה בציבור')
@@ -458,6 +460,7 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
                                 if top_level[1] == "חומש יומי": end_page = toc[j+1][2] - (2 if z == 'שבת קודש' else 1)
                                 if top_level[1] == "תניא יומי": end_page = toc[j+1][2] - 2
                                 if top_level[1] == 'רמב"ם - שלושה פרקים ליום': end_page = toc[j+1][2] - 1
+                                if top_level[1] == 'רמב"ם - פרק אחד ליום': end_page = toc[j+1][2] - 1
                                 
                                 if end_page == start_page:
                                     next_page_num = end_page + 1
@@ -497,7 +500,7 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
 
         if filepath and os.path.exists(filepath):
             # Avoid re-adding content that was handled by Dvar Malchus logic
-            if source and option in ['Chumash', 'Tanya', 'Rambam (3)-Hebrew']:
+            if source and option in ['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (1)-Hebrew']:
                 continue
             
             print(f"Appending {option} from file {filepath}")
@@ -604,7 +607,7 @@ if submit_button: #if the user submits the form, run the following code, which w
     print(week)
     
     # --- Source Determination and Download ---
-    dvar_malchus_needed = source and any(o in opt for o in ['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Project Likutei Sichos (Hebrew)', 'Maamarim', 'Krias Hatorah (includes Haftorah)'])
+    dvar_malchus_needed = source and any(o in opt for o in ['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (1)-Hebrew', 'Project Likutei Sichos (Hebrew)', 'Maamarim', 'Krias Hatorah (includes Haftorah)'])
     
     if dvar_malchus_needed:
         if not os.path.exists(f"dvar{session2}.pdf"):
@@ -622,18 +625,15 @@ if submit_button: #if the user submits the form, run the following code, which w
 
     # --- Main Content Fetching ---
     with st.spinner('Creating PDF...'):
+        rambam_from_chabad = [o for o in opt if 'Rambam' in o and o not in ['Rambam (3)-Hebrew', 'Rambam (1)-Hebrew']]
+        
         if not source: # If using Chabad.org (either by choice or fallback)
             chabadget(dor, opt, session)
-            if any('Rambam' in o for o in opt):
-                rambamenglish(dor, session, opt)
+            rambamenglish(dor, session, opt)
         
         # This part is for when Dvar Malchus is the source, but some Rambam versions still come from Chabad.org
-        if source: 
-            if any(o in opt for o in ['Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Rambam (1)-Hebrew']):
-                rambamenglish(dor, session, opt)
-            # This case is now redundant because if DM fails, source becomes False. But let's keep it as a safeguard.
-            elif 'Rambam (3)-Hebrew' in opt and not os.path.exists(f"dvar{session2}.pdf"):
-                rambamenglish(dor, session, opt)
+        elif source and rambam_from_chabad:
+            rambamenglish(dor, session, rambam_from_chabad)
         
         if 'Hayom Yom' in opt:
             hayomyom(dor, session)
@@ -695,6 +695,7 @@ if not submit_button:
 <br/> **[FIX]** Reworked Dvar Malchus extraction to be more robust against weekly formatting changes.
 <br/> **[FIX]** Implemented more intelligent PDF cleaning to remove quizzes and footnotes without cutting off main content.
 <br/> **[FIX]** Resolved multiple stability issues that could cause crashes when fetching content.
+<br/> **[FIX]** Correctly handle multiple Rambam selections and sources.
 <br/> **[NEW]** Added a navigable Table of Contents to the final PDF.
 <br/> **[NEW]** Added more descriptive error messages to guide users if a source fails.
 
