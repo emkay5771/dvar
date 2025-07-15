@@ -164,9 +164,15 @@ def chabadget(dor, opt, session): # retrieves chumash and tanya from chabad.org
             temp_files_to_delete = []
             for idx, i in enumerate(dor):
                 driver.get(f"https://www.chabad.org/dailystudy/torahreading.asp?tdate={i}#lt=he")
-                wait = WebDriverWait(driver, 10)
+                wait = WebDriverWait(driver, 20)
                 wait.until(EC.presence_of_element_located((By.ID, "content")))
-                time.sleep(2) # Wait for language script to run
+                try:
+                    # Wait for the Hebrew text container to ensure language script has run
+                    wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".hebrew_div")))
+                    print("Chumash Hebrew content loaded.")
+                except Exception as e:
+                    print(f"Timed out waiting for Chumash Hebrew content to load. Error: {e}")
+                    continue
                 
                 pdf = driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
                 
@@ -194,9 +200,15 @@ def chabadget(dor, opt, session): # retrieves chumash and tanya from chabad.org
             temp_files_to_delete = []
             for idx, i in enumerate(dor):
                 driver.get(f"https://www.chabad.org/dailystudy/tanya.asp?tdate={i}&commentary=false#lt=he")
-                wait = WebDriverWait(driver, 10)
+                wait = WebDriverWait(driver, 20)
                 wait.until(EC.presence_of_element_located((By.ID, "content")))
-                time.sleep(2) # Wait for language script to run
+                try:
+                    # Wait for the Hebrew text container to ensure language script has run
+                    wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".hebrew_div")))
+                    print("Tanya Hebrew content loaded.")
+                except Exception as e:
+                    print(f"Timed out waiting for Tanya Hebrew content to load. Error: {e}")
+                    continue
                 
                 pdf = driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
 
@@ -262,9 +274,30 @@ def rambamenglish(dor, session, opt): # retrieves all rambam versions from chaba
 
             for idx, i in enumerate(dor):
                 driver.get(f"https://www.chabad.org/dailystudy/rambam.asp?rambamchapters={chapters}&tdate={i}#lt={lang}")
-                wait = WebDriverWait(driver, 10)
+                wait = WebDriverWait(driver, 20) # Use a longer wait time
+                
+                # First, wait for the main content container to be present
                 wait.until(EC.presence_of_element_located((By.ID, "content")))
-                time.sleep(2) # Wait for language script to run
+
+                # Now, add a specific wait for the language content to load
+                try:
+                    if lang == "both":
+                        # For bilingual, wait for both English and Hebrew text containers
+                        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".english")))
+                        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".hebrew_div")))
+                        print("Bilingual content loaded.")
+                    elif lang == "he":
+                        # For Hebrew only, wait for the Hebrew text container
+                        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".hebrew_div")))
+                        print("Hebrew content loaded.")
+                    elif lang == "primary":
+                        # For English only, wait for the English text container
+                        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".english")))
+                        print("English content loaded.")
+                except Exception as e:
+                    print(f"Timed out waiting for language content for option '{selected_rambam_option}'. Error: {e}")
+                    # Skip to the next day if the content doesn't load correctly
+                    continue
                 
                 pdf = driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
 
