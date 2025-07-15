@@ -163,15 +163,17 @@ def chabadget(dor, opt, session): # retrieves chumash and tanya from chabad.org
             chumash_merger = PdfMerger()
             temp_files_to_delete = []
             for idx, i in enumerate(dor):
-                driver.get(f"https://www.chabad.org/dailystudy/torahreading.asp?tdate={i}#lt=he")
+                url = f"https://www.chabad.org/dailystudy/torahreading.asp?tdate={i}#lt=he"
+                print(f"Requesting Chumash URL: {url}")
+                driver.get(url)
                 wait = WebDriverWait(driver, 20)
                 wait.until(EC.presence_of_element_located((By.ID, "content")))
                 try:
-                    # Wait for the Hebrew text container to ensure language script has run
-                    wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".hebrew_div")))
-                    print("Chumash Hebrew content loaded.")
+                    # Wait for the Hebrew text container to be VISIBLE
+                    wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".hebrew_div")))
+                    print("Chumash Hebrew content is visible.")
                 except Exception as e:
-                    print(f"Timed out waiting for Chumash Hebrew content to load. Error: {e}")
+                    print(f"Timed out waiting for Chumash Hebrew content to become visible. Error: {e}")
                     continue
                 
                 pdf = driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
@@ -199,15 +201,17 @@ def chabadget(dor, opt, session): # retrieves chumash and tanya from chabad.org
             tanya_merger = PdfMerger()
             temp_files_to_delete = []
             for idx, i in enumerate(dor):
-                driver.get(f"https://www.chabad.org/dailystudy/tanya.asp?tdate={i}&commentary=false#lt=he")
+                url = f"https://www.chabad.org/dailystudy/tanya.asp?tdate={i}&commentary=false#lt=he"
+                print(f"Requesting Tanya URL: {url}")
+                driver.get(url)
                 wait = WebDriverWait(driver, 20)
                 wait.until(EC.presence_of_element_located((By.ID, "content")))
                 try:
-                    # Wait for the Hebrew text container to ensure language script has run
-                    wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".hebrew_div")))
-                    print("Tanya Hebrew content loaded.")
+                    # Wait for the Hebrew text container to be VISIBLE
+                    wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".hebrew_div")))
+                    print("Tanya Hebrew content is visible.")
                 except Exception as e:
-                    print(f"Timed out waiting for Tanya Hebrew content to load. Error: {e}")
+                    print(f"Timed out waiting for Tanya Hebrew content to become visible. Error: {e}")
                     continue
                 
                 pdf = driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
@@ -273,30 +277,29 @@ def rambamenglish(dor, session, opt): # retrieves all rambam versions from chaba
                 lang = "primary"; chapters = "1"
 
             for idx, i in enumerate(dor):
-                driver.get(f"https://www.chabad.org/dailystudy/rambam.asp?rambamchapters={chapters}&tdate={i}#lt={lang}")
-                wait = WebDriverWait(driver, 20) # Use a longer wait time
+                url = f"https://www.chabad.org/dailystudy/rambam.asp?rambamchapters={chapters}&tdate={i}#lt={lang}"
+                print(f"Requesting Rambam URL: {url}")
+                driver.get(url)
+                wait = WebDriverWait(driver, 20)
                 
-                # First, wait for the main content container to be present
                 wait.until(EC.presence_of_element_located((By.ID, "content")))
 
-                # Now, add a specific wait for the language content to load
                 try:
                     if lang == "both":
-                        # For bilingual, wait for both English and Hebrew text containers
-                        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".english")))
-                        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".hebrew_div")))
-                        print("Bilingual content loaded.")
+                        # For bilingual, wait for both English and Hebrew text containers to be VISIBLE
+                        wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".english")))
+                        wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".hebrew_div")))
+                        print("Bilingual content is visible.")
                     elif lang == "he":
-                        # For Hebrew only, wait for the Hebrew text container
-                        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".hebrew_div")))
-                        print("Hebrew content loaded.")
+                        # For Hebrew only, wait for the Hebrew text container to be VISIBLE
+                        wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".hebrew_div")))
+                        print("Hebrew content is visible.")
                     elif lang == "primary":
-                        # For English only, wait for the English text container
-                        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".english")))
-                        print("English content loaded.")
+                        # For English only, wait for the English text container to be VISIBLE
+                        wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".english")))
+                        print("English content is visible.")
                 except Exception as e:
-                    print(f"Timed out waiting for language content for option '{selected_rambam_option}'. Error: {e}")
-                    # Skip to the next day if the content doesn't load correctly
+                    print(f"Timed out waiting for language content to become visible for option '{selected_rambam_option}'. Error: {e}")
                     continue
                 
                 pdf = driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
