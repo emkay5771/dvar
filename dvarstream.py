@@ -156,10 +156,10 @@ def chabadget(dor, opt, session): # retrieves chumash and tanya from chabad.org
         'margin-left': '0.1in',
     }
     
-    driver = webdriver.Chrome(service=service, options=options)
-    try:
-        # --- Handle Chumash ---
-        if 'Chumash' in opt and not os.path.exists(f"Chumash{session}.pdf"):
+    # --- Handle Chumash ---
+    if 'Chumash' in opt and not os.path.exists(f"Chumash{session}.pdf"):
+        driver = webdriver.Chrome(service=service, options=options)
+        try:
             chumash_merger = PdfMerger()
             temp_files_to_delete = []
             for idx, i in enumerate(dor):
@@ -188,9 +188,13 @@ def chabadget(dor, opt, session): # retrieves chumash and tanya from chabad.org
             for f_path in temp_files_to_delete:
                 if os.path.exists(f_path):
                     os.remove(f_path)
+        finally:
+            driver.quit()
 
-        # --- Handle Tanya ---
-        if 'Tanya' in opt and not os.path.exists(f"Tanya{session}.pdf"):
+    # --- Handle Tanya ---
+    if 'Tanya' in opt and not os.path.exists(f"Tanya{session}.pdf"):
+        driver = webdriver.Chrome(service=service, options=options)
+        try:
             tanya_merger = PdfMerger()
             temp_files_to_delete = []
             for idx, i in enumerate(dor):
@@ -219,8 +223,8 @@ def chabadget(dor, opt, session): # retrieves chumash and tanya from chabad.org
             for f_path in temp_files_to_delete:
                 if os.path.exists(f_path):
                     os.remove(f_path)
-    finally:
-        driver.quit()
+        finally:
+            driver.quit()
 
 def rambamenglish(dor, session, opt): # retrieves all rambam versions from chabad.org
     pdf_options = {
