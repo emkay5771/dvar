@@ -166,14 +166,22 @@ def chabadget(dor, opt, session): # retrieves chumash and tanya from chabad.org
                 url = f"https://www.chabad.org/dailystudy/torahreading.asp?tdate={i}#lt=he"
                 print(f"Requesting Chumash URL: {url}")
                 driver.get(url)
-                wait = WebDriverWait(driver, 20)
-                wait.until(EC.presence_of_element_located((By.ID, "content")))
+                time.sleep(2) # Allow page to begin loading
+
+                # Check for "no content" message before waiting on elements
+                if "no daily study is available for this date" in driver.page_source:
+                    print(f"No study material available for date {i} for Chumash. Skipping.")
+                    continue
+
                 try:
-                    # Wait for the Hebrew text container to be VISIBLE
+                    wait = WebDriverWait(driver, 20)
+                    # Now that we know it's not a "no content" page, wait for the content div
+                    wait.until(EC.presence_of_element_located((By.ID, "content")))
+                    # Then wait for the language-specific content to be visible
                     wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".hebrew_div")))
                     print("Chumash Hebrew content is visible.")
                 except Exception as e:
-                    print(f"Timed out waiting for Chumash Hebrew content to become visible. Error: {e}")
+                    print(f"An error occurred while waiting for Chumash content on date {i}. Error: {e}")
                     continue
                 
                 pdf = driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
@@ -204,14 +212,19 @@ def chabadget(dor, opt, session): # retrieves chumash and tanya from chabad.org
                 url = f"https://www.chabad.org/dailystudy/tanya.asp?tdate={i}&commentary=false#lt=he"
                 print(f"Requesting Tanya URL: {url}")
                 driver.get(url)
-                wait = WebDriverWait(driver, 20)
-                wait.until(EC.presence_of_element_located((By.ID, "content")))
+                time.sleep(2) # Allow page to begin loading
+
+                if "no daily study is available for this date" in driver.page_source:
+                    print(f"No study material available for date {i} for Tanya. Skipping.")
+                    continue
+
                 try:
-                    # Wait for the Hebrew text container to be VISIBLE
+                    wait = WebDriverWait(driver, 20)
+                    wait.until(EC.presence_of_element_located((By.ID, "content")))
                     wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".hebrew_div")))
                     print("Tanya Hebrew content is visible.")
                 except Exception as e:
-                    print(f"Timed out waiting for Tanya Hebrew content to become visible. Error: {e}")
+                    print(f"An error occurred while waiting for Tanya content on date {i}. Error: {e}")
                     continue
                 
                 pdf = driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
@@ -280,26 +293,30 @@ def rambamenglish(dor, session, opt): # retrieves all rambam versions from chaba
                 url = f"https://www.chabad.org/dailystudy/rambam.asp?rambamchapters={chapters}&tdate={i}#lt={lang}"
                 print(f"Requesting Rambam URL: {url}")
                 driver.get(url)
-                wait = WebDriverWait(driver, 20)
-                
-                wait.until(EC.presence_of_element_located((By.ID, "content")))
+                time.sleep(2) # Allow page to begin loading
+
+                # Check for "no content" message before waiting on elements
+                if "no daily study is available for this date" in driver.page_source:
+                    print(f"No study material available for date {i} for Rambam. Skipping.")
+                    continue
 
                 try:
+                    wait = WebDriverWait(driver, 20)
+                    wait.until(EC.presence_of_element_located((By.ID, "content")))
+                    
                     if lang == "both":
-                        # For bilingual, wait for both English and Hebrew text containers to be VISIBLE
                         wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".english")))
                         wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".hebrew_div")))
                         print("Bilingual content is visible.")
                     elif lang == "he":
-                        # For Hebrew only, wait for the Hebrew text container to be VISIBLE
                         wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".hebrew_div")))
                         print("Hebrew content is visible.")
                     elif lang == "primary":
-                        # For English only, wait for the English text container to be VISIBLE
                         wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".english")))
                         print("English content is visible.")
+
                 except Exception as e:
-                    print(f"Timed out waiting for language content to become visible for option '{selected_rambam_option}'. Error: {e}")
+                    print(f"An error occurred while waiting for Rambam content on date {i}. Error: {e}")
                     continue
                 
                 pdf = driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
