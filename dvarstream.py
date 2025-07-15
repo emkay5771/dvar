@@ -163,9 +163,11 @@ def chabadget(dor, opt, session): # retrieves chumash and tanya from chabad.org
             chumash_merger = PdfMerger()
             temp_files_to_delete = []
             for idx, i in enumerate(dor):
-                driver.get(f"https://www.chabad.org/dailystudy/torahreading.asp?tdate={i}&lt=he")
+                driver.get(f"https://www.chabad.org/dailystudy/torahreading.asp?tdate={i}")
                 wait = WebDriverWait(driver, 10)
                 wait.until(EC.presence_of_element_located((By.ID, "content")))
+                driver.execute_script("co_DailyStudy.SetLanguage('he')")
+                time.sleep(3)
                 
                 pdf = driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
                 
@@ -192,9 +194,11 @@ def chabadget(dor, opt, session): # retrieves chumash and tanya from chabad.org
             tanya_merger = PdfMerger()
             temp_files_to_delete = []
             for idx, i in enumerate(dor):
-                driver.get(f"https://www.chabad.org/dailystudy/tanya.asp?tdate={i}&commentary=false&lt=he")
+                driver.get(f"https://www.chabad.org/dailystudy/tanya.asp?tdate={i}&commentary=false")
                 wait = WebDriverWait(driver, 10)
                 wait.until(EC.presence_of_element_located((By.ID, "content")))
+                driver.execute_script("co_DailyStudy.SetLanguage('he')")
+                time.sleep(3)
                 
                 pdf = driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
 
@@ -259,9 +263,14 @@ def rambamenglish(dor, session, opt): # retrieves all rambam versions from chaba
         driver = webdriver.Chrome(service=service, options=options)
         try:
             for idx, i in enumerate(dor):
-                driver.get(f"https://www.chabad.org/dailystudy/rambam.asp?rambamchapters={chapters}&tdate={i}&lt={lang}")
+                base_url = f"https://www.chabad.org/dailystudy/rambam.asp?rambamchapters={chapters}&tdate={i}"
+                driver.get(base_url)
                 wait = WebDriverWait(driver, 10)
                 wait.until(EC.presence_of_element_located((By.ID, "content")))
+                
+                print(f"Setting language to '{lang}' for {selected_rambam_option}")
+                driver.execute_script(f"co_DailyStudy.SetLanguage('{lang}')")
+                time.sleep(3)
                 
                 pdf = driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
 
