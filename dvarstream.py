@@ -163,7 +163,7 @@ def chabadget(dor, opt, session): # retrieves chumash and tanya from chabad.org
             chumash_merger = PdfMerger()
             temp_files_to_delete = []
             for idx, i in enumerate(dor):
-                driver.get(f"https://www.chabad.org/dailystudy/torahreading.asp?tdate={i}#lt=he")
+                driver.get(f"https://www.chabad.org/dailystudy/torahreading.asp?tdate={i}&lt=he")
                 wait = WebDriverWait(driver, 10)
                 wait.until(EC.presence_of_element_located((By.ID, "content")))
                 
@@ -192,7 +192,7 @@ def chabadget(dor, opt, session): # retrieves chumash and tanya from chabad.org
             tanya_merger = PdfMerger()
             temp_files_to_delete = []
             for idx, i in enumerate(dor):
-                driver.get(f"https://www.chabad.org/dailystudy/tanya.asp?tdate={i}&commentary=false#lt=he")
+                driver.get(f"https://www.chabad.org/dailystudy/tanya.asp?tdate={i}&commentary=false&lt=he")
                 wait = WebDriverWait(driver, 10)
                 wait.until(EC.presence_of_element_located((By.ID, "content")))
                 
@@ -259,7 +259,7 @@ def rambamenglish(dor, session, opt): # retrieves all rambam versions from chaba
         driver = webdriver.Chrome(service=service, options=options)
         try:
             for idx, i in enumerate(dor):
-                driver.get(f"https://www.chabad.org/dailystudy/rambam.asp?rambamchapters={chapters}&tdate={i}#lt={lang}")
+                driver.get(f"https://www.chabad.org/dailystudy/rambam.asp?rambamchapters={chapters}&tdate={i}&lt={lang}")
                 wait = WebDriverWait(driver, 10)
                 wait.until(EC.presence_of_element_located((By.ID, "content")))
                 
