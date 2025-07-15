@@ -162,22 +162,20 @@ def chabadget(dor, opt, session): # retrieves chumash and tanya from chabad.org
         if 'Chumash' in opt and not os.path.exists(f"Chumash{session}.pdf"):
             chumash_merger = PdfMerger()
             temp_files_to_delete = []
+            successful_pages = 0
             for idx, i in enumerate(dor):
                 url = f"https://www.chabad.org/dailystudy/torahreading.asp?tdate={i}#lt=he"
                 print(f"Requesting Chumash URL: {url}")
                 driver.get(url)
                 time.sleep(2) # Allow page to begin loading
 
-                # Check for "no content" message before waiting on elements
                 if "no daily study is available for this date" in driver.page_source:
                     print(f"No study material available for date {i} for Chumash. Skipping.")
                     continue
 
                 try:
                     wait = WebDriverWait(driver, 20)
-                    # Now that we know it's not a "no content" page, wait for the content div
                     wait.until(EC.presence_of_element_located((By.ID, "content")))
-                    # Then wait for the language-specific content to be visible
                     wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".hebrew_div")))
                     print("Chumash Hebrew content is visible.")
                 except Exception as e:
@@ -196,9 +194,11 @@ def chabadget(dor, opt, session): # retrieves chumash and tanya from chabad.org
                 if clean_chabad_pdf(day_temp_raw_path, day_temp_clean_path):
                     if os.path.exists(day_temp_clean_path) and os.path.getsize(day_temp_clean_path) > 0:
                         chumash_merger.append(day_temp_clean_path)
+                        successful_pages += 1
                     temp_files_to_delete.append(day_temp_clean_path)
             
-            chumash_merger.write(f"Chumash{session}.pdf")
+            if successful_pages > 0:
+                chumash_merger.write(f"Chumash{session}.pdf")
             chumash_merger.close()
             for f_path in temp_files_to_delete:
                 if os.path.exists(f_path):
@@ -208,11 +208,12 @@ def chabadget(dor, opt, session): # retrieves chumash and tanya from chabad.org
         if 'Tanya' in opt and not os.path.exists(f"Tanya{session}.pdf"):
             tanya_merger = PdfMerger()
             temp_files_to_delete = []
+            successful_pages = 0
             for idx, i in enumerate(dor):
                 url = f"https://www.chabad.org/dailystudy/tanya.asp?tdate={i}&commentary=false#lt=he"
                 print(f"Requesting Tanya URL: {url}")
                 driver.get(url)
-                time.sleep(2) # Allow page to begin loading
+                time.sleep(2)
 
                 if "no daily study is available for this date" in driver.page_source:
                     print(f"No study material available for date {i} for Tanya. Skipping.")
@@ -239,9 +240,11 @@ def chabadget(dor, opt, session): # retrieves chumash and tanya from chabad.org
                 if clean_chabad_pdf(day_temp_raw_path, day_temp_clean_path):
                         if os.path.exists(day_temp_clean_path) and os.path.getsize(day_temp_clean_path) > 0:
                             tanya_merger.append(day_temp_clean_path)
+                            successful_pages += 1
                         temp_files_to_delete.append(day_temp_clean_path)
             
-            tanya_merger.write(f"Tanya{session}.pdf")
+            if successful_pages > 0:
+                tanya_merger.write(f"Tanya{session}.pdf")
             tanya_merger.close()
             for f_path in temp_files_to_delete:
                 if os.path.exists(f_path):
@@ -273,6 +276,7 @@ def rambamenglish(dor, session, opt): # retrieves all rambam versions from chaba
 
             merger = PdfMerger()
             temp_files_to_delete = []
+            successful_pages = 0
 
             lang = ""
             chapters = ""
@@ -293,9 +297,8 @@ def rambamenglish(dor, session, opt): # retrieves all rambam versions from chaba
                 url = f"https://www.chabad.org/dailystudy/rambam.asp?rambamchapters={chapters}&tdate={i}#lt={lang}"
                 print(f"Requesting Rambam URL: {url}")
                 driver.get(url)
-                time.sleep(2) # Allow page to begin loading
+                time.sleep(2) 
 
-                # Check for "no content" message before waiting on elements
                 if "no daily study is available for this date" in driver.page_source:
                     print(f"No study material available for date {i} for Rambam. Skipping.")
                     continue
@@ -331,9 +334,11 @@ def rambamenglish(dor, session, opt): # retrieves all rambam versions from chaba
                 if clean_chabad_pdf(day_temp_raw_path, day_temp_clean_path):
                     if os.path.exists(day_temp_clean_path) and os.path.getsize(day_temp_clean_path) > 0:
                         merger.append(day_temp_clean_path)
+                        successful_pages += 1
                     temp_files_to_delete.append(day_temp_clean_path)
             
-            merger.write(unique_filename)
+            if successful_pages > 0:
+                merger.write(unique_filename)
             merger.close()
             for f_path in temp_files_to_delete:
                 if os.path.exists(f_path):
