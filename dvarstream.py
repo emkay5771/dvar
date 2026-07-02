@@ -79,6 +79,13 @@ def _dvarget_locked(session2):
     logger.info("Dvarget Running")
     driver = webdriver.Chrome(options=options)
     logger.info("Driver Opened")
+    # Headless Chrome blocks file downloads by default regardless of the
+    # download.* prefs above; this CDP call is what actually allows the
+    # browser to save the booklet PDF to the working directory.
+    driver.execute_cdp_cmd("Page.setDownloadBehavior", {
+        "behavior": "allow",
+        "downloadPath": os.getcwd(),
+    })
     driver.get("https://dvarmalchus.org")
     logger.info("Dvar Malchus Opened")
     download_started_at = time.time()
