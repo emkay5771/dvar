@@ -63,6 +63,18 @@ def dvarget(session2): # attempts to retrieve dvar malchus pdf
             return
         _dvarget_locked(session2)
 
+def _dvarget_button_xpath(link_text):
+    # Match on the Elementor button's class + visible text instead of an absolute,
+    # deeply-nested positional path: the site is WordPress/Elementor, and its exact div
+    # nesting has drifted before (this is why the old absolute XPaths kept breaking),
+    # but the button's class and text are far more likely to stay stable across
+    # layout tweaks. Verified live: dvarmalchus.org currently renders this button
+    # (identical href) in six different places on the page (header, footer, body).
+    return (
+        "//a[.//span[contains(@class,'elementor-button-text')]"
+        f"[normalize-space(text())='{link_text}']]"
+    )
+
 def _dvarget_locked(session2):
     logger.info("Dvarget Running")
     driver = webdriver.Chrome(options=options)
@@ -70,38 +82,31 @@ def _dvarget_locked(session2):
     driver.get("https://dvarmalchus.org")
     logger.info("Dvar Malchus Opened")
     download_started_at = time.time()
-    xpaths = [
-        "/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div/div/div/a/span/span[2]",
-        "/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div",
-        "/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div/div/div",
-        '/html/body/div[1]/section[2]/div[3]/div/div/div[3]/div/div/a',
-        '/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div[1]/div/div/a',
-        "/html/body/div[1]/section[2]/div[3]/div/div/div[4]/div/div/section/section/div/div/div/div[2]/div/div/a",
-        '/html/body/div[1]/section[9]/div/div/div/div[3]/div/div/div/div[1]/div/section/div/div/div/section/div/div/div/div/div/div/a',
-        '/html/body/div[1]/section[9]/div/div/div/div[3]/div/div/div/div[2]/div/section/div/div/div/section/div/div/div/div/div/div/a'
-    ]
-    for each in xpaths:
+
+    link_texts = ["להורדת החוברת השבועית", "להורדת החוברת השבועית - חו״ל"]
+    url = None
+    try:
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.XPATH, _dvarget_button_xpath(link_texts[0])))
+        )
+    except Exception:
+        logger.warning("Weekly booklet button never appeared on dvarmalchus.org", exc_info=True)
+
+    for link_text in link_texts:
         try:
-            link_text = driver.find_element(By.XPATH, f"{each}/span/span[2]").text
-            if link_text == "להורדת החוברת השבועית" :
-                logger.info(f"clicking {each}")
-                url = driver.find_element(By.XPATH, each).get_attribute("href")
-                driver.get(url)
-                logger.info(f"URL: {url}")
-                break
-            else:
-                if link_text != "להורדת החוברת השבועית - חו״ל":
-                    logger.debug("skipping " + each)
-                    continue
-                elif link_text == "להורדת החוברת השבועית - חו״ל":
-                    logger.info(f"clicking alternate {each}")
-                    url = driver.find_element(By.XPATH, each).get_attribute("href")
-                    logger.info(url)
-                    driver.get(url)
-                    break
+            element = driver.find_element(By.XPATH, _dvarget_button_xpath(link_text))
+            url = element.get_attribute("href")
+            logger.info(f"clicking '{link_text}' -> {url}")
+            driver.get(url)
+            break
         except Exception:
-            logger.debug(f"xpath {each} did not match, trying next", exc_info=True)
+            logger.debug(f"button with text '{link_text}' not found, trying next", exc_info=True)
             continue
+
+    if url is None:
+        logger.warning("Could not find the weekly booklet download button on dvarmalchus.org")
+        driver.quit()
+        raise RuntimeError("dvarmalchus.org download button not found")
 
     driver.save_screenshot("dvar.png")
     logger.info("waiting for download")
