@@ -8,7 +8,7 @@ import time
 import threading
 import logging
 import fitz as fitz #type: ignore
-from base64 import b64decode
+from base64 import b64decode, b64encode
 from dateutil.relativedelta import relativedelta #type: ignore
 from datetime import date #type: ignore
 from datetime import datetime as dt #type: ignore
@@ -51,6 +51,19 @@ service = Service(chrome_driver_path)
 # download and race each other writing the same filename.
 _dvar_cache_lock = threading.Lock()
 _shnayim_cache_lock = threading.Lock()
+
+def render_html_to_pdf(html, pdf_options):
+    # Shared by the Sefaria-sourced builders below: renders a locally-authored HTML string
+    # (rather than a scraped page) through the same headless-Chrome print-to-PDF pipeline
+    # already used for chabad.org, so Hebrew RTL layout/fonts come from the browser for
+    # free and we don't need a second PDF-generation library.
+    driver = webdriver.Chrome(options=options)
+    try:
+        encoded = b64encode(html.encode("utf-8")).decode("ascii")
+        driver.get(f"data:text/html;charset=utf-8;base64,{encoded}")
+        return driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
+    finally:
+        driver.quit()
 
 def dvarget(session2): # attempts to retrieve dvar malchus pdf
     # dvar{session2}.pdf is a cross-user cache (same weekly booklet for everyone within
@@ -149,6 +162,7 @@ def chabadget(dor, opt, session): # retrieves chumash and tanya from chabad.org
     }
     if os.path.exists(f"Chumash{session}.pdf") != True:
         merger = PdfMerger()
+        appended_any = False
         if 'Chumash' in opt:
             for i in dor:
                 driver = webdriver.Chrome(options=options)
@@ -157,18 +171,26 @@ def chabadget(dor, opt, session): # retrieves chumash and tanya from chabad.org
                     wait = WebDriverWait(driver, 10)
                     element = wait.until(EC.presence_of_element_located((By.ID, "content")))
                     pdf = driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
+                except Exception:
+                    # Leave Chumash{session}.pdf absent on failure (rather than crash the
+                    # whole Streamlit run) so the caller can fall through to the next tier.
+                    logger.warning("Chabad.org Chumash fetch failed for %s", i, exc_info=True)
+                    continue
                 finally:
                     driver.quit()
                 with open(f"temp{session}.pdf", "ab") as f:
                     f.write(b64decode(pdf["data"]))
                 merger.append(f"temp{session}.pdf")
+                appended_any = True
 
-            merger.write(f"Chumash{session}.pdf")
+            if appended_any:
+                merger.write(f"Chumash{session}.pdf")
             merger.close()
             if os.path.exists(f"temp{session}.pdf"):
                 os.remove(f"temp{session}.pdf")
     if os.path.exists(f"Tanya{session}.pdf") != True:
         merger2 = PdfMerger()
+        appended_any = False
         if 'Tanya' in opt:
             for i in dor:
                 driver = webdriver.Chrome(options=options)
@@ -178,13 +200,18 @@ def chabadget(dor, opt, session): # retrieves chumash and tanya from chabad.org
                     element = wait.until(EC.presence_of_element_located((By.ID, "content")))
                     time.sleep(3)
                     pdf = driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
+                except Exception:
+                    logger.warning("Chabad.org Tanya fetch failed for %s", i, exc_info=True)
+                    continue
                 finally:
                     driver.quit()
                 with open(f"temp{session}.pdf", "ab") as f:
                     f.write(b64decode(pdf["data"]))
                 merger2.append(f"temp{session}.pdf")
+                appended_any = True
 
-            merger2.write(f"Tanya{session}.pdf")
+            if appended_any:
+                merger2.write(f"Tanya{session}.pdf")
             merger2.close()
             if os.path.exists(f"temp{session}.pdf"):
                 os.remove(f"temp{session}.pdf")
@@ -199,6 +226,7 @@ def rambamenglish(dor, session, opt): # retrieves all rambam versions from chaba
     }
     merger = PdfMerger()
     if os.path.exists(f"Rambam{session}.pdf") != True:
+        appended_any = False
         for i in dor:
             driver = webdriver.Chrome(options=options)
             lang = ""
@@ -226,16 +254,22 @@ def rambamenglish(dor, session, opt): # retrieves all rambam versions from chaba
                 wait = WebDriverWait(driver, 10)
                 element = wait.until(EC.presence_of_element_located((By.ID, "content")))
                 pdf = driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
+            except Exception:
+                logger.warning("Chabad.org Rambam fetch failed for %s", i, exc_info=True)
+                continue
             finally:
                 driver.quit()
             with open(f"temp{session}.pdf", "ab") as f:
                 f.write(b64decode(pdf["data"]))
 
             merger.append(f"temp{session}.pdf")
+            appended_any = True
 
-        merger.write(f"Rambam{session}.pdf")
+        if appended_any:
+            merger.write(f"Rambam{session}.pdf")
         merger.close()
-        os.remove(f"temp{session}.pdf")
+        if os.path.exists(f"temp{session}.pdf"):
+            os.remove(f"temp{session}.pdf")
 
 def hayomyom(dor, session): #gets hayom yom from chabad.org
     pdf_options = {
@@ -247,6 +281,7 @@ def hayomyom(dor, session): #gets hayom yom from chabad.org
     }
     merger3 = PdfMerger()
     if os.path.exists(f"Hayom{session}.pdf") != True:
+        appended_any = False
         for i in dor:
             driver = webdriver.Chrome(options=options)
             try:
@@ -254,15 +289,245 @@ def hayomyom(dor, session): #gets hayom yom from chabad.org
                 wait = WebDriverWait(driver, 10)
                 element = wait.until(EC.presence_of_element_located((By.ID, "content")))
                 pdf = driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
+            except Exception:
+                # No further fallback exists for Hayom Yom (Sefaria doesn't have it and
+                # it's not part of Dvar Malchus's contents either) -- surface a warning
+                # instead of crashing, since there's nothing else to try.
+                logger.warning("Chabad.org Hayom Yom fetch failed for %s; no fallback source available", i, exc_info=True)
+                st.warning("Could not fetch Hayom Yom from Chabad.org, and no alternative source is available for it. Skipping.")
+                continue
             finally:
                 driver.quit()
             with open(f"temp{session}.pdf", "ab") as f:
                 f.write(b64decode(pdf["data"]))
 
             merger3.append(f"temp{session}.pdf")
+            appended_any = True
 
-        merger3.write(f"Hayom{session}.pdf")
+        if appended_any:
+            merger3.write(f"Hayom{session}.pdf")
         merger3.close()
+        if os.path.exists(f"temp{session}.pdf"):
+            os.remove(f"temp{session}.pdf")
+
+SEFARIA_API_BASE = "https://www.sefaria.org/api"
+WEEKDAY_TO_NUM = {'Monday': 0, 'Tuesday': 1, 'Wednesday': 2, 'Thursday': 3, 'Friday': 4, 'Shabbos': 5, 'Sunday': 6}
+ALIYAH_WEEKDAY_ORDER = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos']
+
+_SEFARIA_HTML_HEAD = """<html><head><meta charset="utf-8"><style>
+body { font-family: 'Noto Sans Hebrew', 'David', 'Times New Roman', serif; direction: rtl; padding: 2em; }
+.hebrew { font-size: 1.3em; line-height: 1.8; margin-bottom: 1.2em; }
+.english { font-size: 1.1em; line-height: 1.6; direction: ltr; text-align: left; margin-bottom: 1.2em; }
+.rashi { margin-top: 0.8em; padding-right: 1.5em; font-size: 1em; color: #333; border-right: 3px solid #999; }
+.rashi-title { font-weight: bold; margin-bottom: 0.4em; }
+h1 { text-align: center; font-size: 1.4em; }
+</style></head><body>
+"""
+_SEFARIA_HTML_END = "</body></html>"
+
+def _flatten_sefaria_text(value):
+    # Sefaria's 'he'/'text' fields can be a plain string, or nested lists of strings
+    # across chapter boundaries when a ref spans more than one chapter; flatten to one
+    # ordered list of verse strings either way.
+    if isinstance(value, str):
+        return [value] if value else []
+    flat = []
+    for item in value or []:
+        flat.extend(_flatten_sefaria_text(item))
+    return flat
+
+@st.cache_data(ttl="12h")
+def sefaria_calendar(date_str):
+    # Sefaria's own calendar already includes the correct per-day aliyah breakdown for
+    # Parashat Hashavua in 'extraDetails.aliyot' -- including combined/double-parsha weeks
+    # (verified live: it reflects the standard *combined* 7-aliyah division for weeks like
+    # Vayakhel-Pekudei, not each portion's independent split), so no separate double-parsha
+    # table or calendar library is needed on our end.
+    try:
+        y, m, d = date_str.split("-")
+        resp = requests.get(f"{SEFARIA_API_BASE}/calendars", params={"year": y, "month": m, "day": d}, timeout=15)
+        resp.raise_for_status()
+        return resp.json().get("calendar_items", [])
+    except Exception:
+        logger.warning("Could not fetch Sefaria calendar for %s", date_str, exc_info=True)
+        return []
+
+def sefaria_fetch_text(ref):
+    try:
+        resp = requests.get(f"{SEFARIA_API_BASE}/texts/{requests.utils.quote(ref)}", params={"context": 0}, timeout=15)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception:
+        logger.warning("Could not fetch Sefaria text for ref '%s'", ref, exc_info=True)
+        return None
+
+def sefaria_fetch_rashi(ref):
+    try:
+        resp = requests.get(f"{SEFARIA_API_BASE}/links/{requests.utils.quote(ref)}", timeout=15)
+        resp.raise_for_status()
+        links = resp.json()
+    except Exception:
+        logger.warning("Could not fetch Sefaria Rashi links for ref '%s'", ref, exc_info=True)
+        return []
+    comments = []
+    for link in links or []:
+        collective_title = (link.get("collectiveTitle") or {}).get("en", "")
+        if "Rashi" not in collective_title:
+            continue
+        he = link.get("he")
+        if not he:
+            continue
+        comments.append(he if isinstance(he, str) else " ".join(_flatten_sefaria_text(he)))
+    return comments
+
+def sefaria_chumash_get(week, session): # 3rd-tier Chumash+Rashi fallback via Sefaria
+    if os.path.exists(f"Chumash{session}.pdf"):
+        return
+    pdf_options = {'scale': scale, 'margin-top': '0.1in', 'margin-right': '0.1in',
+                   'margin-bottom': '0.1in', 'margin-left': '0.1in'}
+    merger = PdfMerger()
+    appended_any = False
+    for weekday_name in week:
+        try:
+            day_date = date.today() + relativedelta(weekday=WEEKDAY_TO_NUM[weekday_name])
+            calendar_items = sefaria_calendar(day_date.strftime("%Y-%m-%d"))
+            parsha_item = next((i for i in calendar_items if i.get("title", {}).get("en") == "Parashat Hashavua"), None)
+            aliyot = ((parsha_item or {}).get("extraDetails") or {}).get("aliyot", [])
+            aliyah_index = ALIYAH_WEEKDAY_ORDER.index(weekday_name)
+            if len(aliyot) <= aliyah_index:
+                logger.warning("No Sefaria aliyah data for %s on %s", weekday_name, day_date)
+                continue
+            ref = aliyot[aliyah_index]
+            text_data = sefaria_fetch_text(ref)
+            if not text_data:
+                continue
+            hebrew_verses = _flatten_sefaria_text(text_data.get("he"))
+            if not hebrew_verses:
+                continue
+            rashi_comments = sefaria_fetch_rashi(ref)
+            rashi_html = ""
+            if rashi_comments:
+                rashi_html = (
+                    '<div class="rashi"><div class="rashi-title">רש"י</div>'
+                    + "<br><br>".join(rashi_comments) + "</div>"
+                )
+            html = (
+                _SEFARIA_HTML_HEAD + f"<h1>{ref}</h1>"
+                + f'<div class="hebrew">{"<br>".join(hebrew_verses)}</div>'
+                + rashi_html + _SEFARIA_HTML_END
+            )
+            pdf = render_html_to_pdf(html, pdf_options)
+            with open(f"temp{session}.pdf", "ab") as f:
+                f.write(b64decode(pdf["data"]))
+            merger.append(f"temp{session}.pdf")
+            appended_any = True
+        except Exception:
+            logger.warning("Sefaria Chumash fetch failed for %s", weekday_name, exc_info=True)
+            continue
+    if appended_any:
+        merger.write(f"Chumash{session}.pdf")
+    merger.close()
+    if os.path.exists(f"temp{session}.pdf"):
+        os.remove(f"temp{session}.pdf")
+
+def sefaria_tanya_get(week, session): # 3rd-tier Tanya fallback via Sefaria
+    if os.path.exists(f"Tanya{session}.pdf"):
+        return
+    pdf_options = {'scale': scale, 'margin-top': '0.1in', 'margin-right': '0.1in',
+                   'margin-bottom': '0.1in', 'margin-left': '0.1in'}
+    merger = PdfMerger()
+    appended_any = False
+    for weekday_name in week:
+        try:
+            day_date = date.today() + relativedelta(weekday=WEEKDAY_TO_NUM[weekday_name])
+            calendar_items = sefaria_calendar(day_date.strftime("%Y-%m-%d"))
+            tanya_item = next((i for i in calendar_items if i.get("title", {}).get("en") == "Tanya Yomi"), None)
+            if not tanya_item:
+                logger.warning("No Sefaria Tanya Yomi entry for %s", day_date)
+                continue
+            ref = tanya_item["ref"]
+            text_data = sefaria_fetch_text(ref)
+            if not text_data:
+                continue
+            hebrew_verses = _flatten_sefaria_text(text_data.get("he"))
+            if not hebrew_verses:
+                continue
+            html = (
+                _SEFARIA_HTML_HEAD + f"<h1>{ref}</h1>"
+                + f'<div class="hebrew">{"<br>".join(hebrew_verses)}</div>' + _SEFARIA_HTML_END
+            )
+            pdf = render_html_to_pdf(html, pdf_options)
+            with open(f"temp{session}.pdf", "ab") as f:
+                f.write(b64decode(pdf["data"]))
+            merger.append(f"temp{session}.pdf")
+            appended_any = True
+        except Exception:
+            logger.warning("Sefaria Tanya fetch failed for %s", weekday_name, exc_info=True)
+            continue
+    if appended_any:
+        merger.write(f"Tanya{session}.pdf")
+    merger.close()
+    if os.path.exists(f"temp{session}.pdf"):
+        os.remove(f"temp{session}.pdf")
+
+def sefaria_rambam_get(week, session, opt): # 3rd-tier Rambam fallback via Sefaria
+    if os.path.exists(f"Rambam{session}.pdf"):
+        return
+    pdf_options = {'scale': scale2, 'margin-top': '0.1in', 'margin-right': '0.1in',
+                   'margin-bottom': '0.1in', 'margin-left': '0.1in'}
+    three_chapters = any(o in opt for o in ["Rambam (3)-Bilingual", "Rambam (3)-Hebrew", "Rambam (3)-English"])
+    calendar_title = "Daily Rambam (3 Chapters)" if three_chapters else "Daily Rambam"
+    lang_both = any(o in opt for o in ["Rambam (3)-Bilingual", "Rambam (1)-Bilingual"])
+    lang_en_only = any(o in opt for o in ["Rambam (3)-English", "Rambam (1)-English"])
+    merger = PdfMerger()
+    appended_any = False
+    for weekday_name in week:
+        try:
+            day_date = date.today() + relativedelta(weekday=WEEKDAY_TO_NUM[weekday_name])
+            calendar_items = sefaria_calendar(day_date.strftime("%Y-%m-%d"))
+            # The 3-chapter cycle can appear as two calendar entries on days where it
+            # crosses a Mishneh Torah sub-book boundary -- include every match.
+            rambam_items = [i for i in calendar_items if i.get("title", {}).get("en") == calendar_title]
+            if not rambam_items:
+                logger.warning("No Sefaria '%s' entry for %s", calendar_title, day_date)
+                continue
+            title_parts = []
+            sections_html = []
+            for item in rambam_items:
+                ref = item["ref"]
+                title_parts.append(ref)
+                text_data = sefaria_fetch_text(ref)
+                if not text_data:
+                    continue
+                block = ""
+                if not lang_en_only:
+                    hebrew_verses = _flatten_sefaria_text(text_data.get("he"))
+                    if hebrew_verses:
+                        block += f'<div class="hebrew">{"<br>".join(hebrew_verses)}</div>'
+                if lang_both or lang_en_only:
+                    english_verses = _flatten_sefaria_text(text_data.get("text"))
+                    if english_verses:
+                        block += f'<div class="english">{"<br>".join(english_verses)}</div>'
+                if block:
+                    sections_html.append(block)
+            if not sections_html:
+                continue
+            html = (
+                _SEFARIA_HTML_HEAD + f"<h1>{' / '.join(title_parts)}</h1>"
+                + "<hr>".join(sections_html) + _SEFARIA_HTML_END
+            )
+            pdf = render_html_to_pdf(html, pdf_options)
+            with open(f"temp{session}.pdf", "ab") as f:
+                f.write(b64decode(pdf["data"]))
+            merger.append(f"temp{session}.pdf")
+            appended_any = True
+        except Exception:
+            logger.warning("Sefaria Rambam fetch failed for %s", weekday_name, exc_info=True)
+            continue
+    if appended_any:
+        merger.write(f"Rambam{session}.pdf")
+    merger.close()
+    if os.path.exists(f"temp{session}.pdf"):
         os.remove(f"temp{session}.pdf")
 
 def parshaget(date1): #get parsha from date for shnayim mikra
@@ -377,6 +642,19 @@ def dedupe(pages, pages2, pages3, start_page, end_page): #dedupes the pages when
         pages.append(end_page)
     return start_page,end_page
 
+def ensure_material(name, session, chabad_fetch, sefaria_fetch):
+    # Shared 3-tier trigger: dvar malchus is handled by callers before this point, so this
+    # just tries chabad.org, then falls through to Sefaria only if chabad.org didn't
+    # produce the file. Both fetchers already leave the file absent on failure instead of
+    # raising, so "file still missing" is the sole signal to try the next tier.
+    if os.path.exists(f"{name}{session}.pdf"):
+        return
+    chabad_fetch()
+    if os.path.exists(f"{name}{session}.pdf"):
+        return
+    logger.info("%s not available from Chabad.org, trying Sefaria...", name)
+    sefaria_fetch()
+
 def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collecting all the necessary files
     output_dir = ""
     toc = []
@@ -399,7 +677,19 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
                 st.error("Project Likutei Sichos, the Haftorah, and Maamarim are not available from Chabad.org. Please try again.")
                 st.stop()
             source = False
-            chabadget(dor, opt, session)
+            if 'Chumash' in opt:
+                ensure_material("Chumash", session, lambda: chabadget(dor, opt, session),
+                                 lambda: sefaria_chumash_get(week, session))
+            if 'Tanya' in opt:
+                ensure_material("Tanya", session, lambda: chabadget(dor, opt, session),
+                                 lambda: sefaria_tanya_get(week, session))
+            if rambam_requested:
+                # Closes a latent gap: this inline fallback used to only call chabadget()
+                # and never rambamenglish(), so if Dvar Malchus's file existed but was
+                # corrupt/unreadable (caught here), Rambam silently never got fetched and
+                # the script crashed later trying to open a Rambam file that never existed.
+                ensure_material("Rambam", session, lambda: rambamenglish(dor, session, opt),
+                                 lambda: sefaria_rambam_get(week, session, opt))
 
     if source == False:
             logger.info("Chabad.org")
@@ -518,6 +808,7 @@ with st.form(key="dvarform", clear_on_submit=False): #streamlit form for user in
     st.info("Need more than 1 week? Check out 📖[Chitas Collator](https://chitas-collator.streamlit.app/)!")
     markdownlit.mdlit("""This app is designed to create a printout for Chitas, Rambam, plus a few other things. To get the materials directly and support the original publishers, go to @(**[blue]Dvar Malchus[/blue]**)(https://dvarmalchus.org/)
     and @(🔥)(**[orange]Chabad.org[/orange]**)(https://www.chabad.org/dailystudy/default_cdo/jewish/Daily-Study.htm/).
+    For Chumash, Tanya, and Rambam, if both of those are unavailable this app will fall back to @(**[green]Sefaria[/green]**)(https://www.sefaria.org/). Hayom Yom, Project Likutei Sichos, Maamarim, and the Haftorah have no further fallback if Chabad.org is unavailable.
     """)
     session2 = dateset()
     date1 = date.today().strftime('%Y, %-m, %-d')
@@ -605,16 +896,26 @@ if submit_button: #if the user submits the form, run the following code, which w
             st.write("Dvar Malchus not needed. Using Chabad.org...")
             source = False
             cover = False
+    rambam_requested = ('Rambam (3)-Hebrew' in opt or 'Rambam (3)-Bilingual' in opt or 'Rambam (3)-English' in opt
+                        or 'Rambam (1)-Bilingual' in opt or 'Rambam (1)-English' in opt or 'Rambam (1)-Hebrew' in opt)
     with st.spinner('Creating PDF...'):
         if source == False:
-            chabadget(dor, opt, session)
-            if 'Rambam (3)-Hebrew' in opt or 'Rambam (3)-Bilingual' in opt or 'Rambam (3)-English' in opt or 'Rambam (1)-Bilingual' in opt or 'Rambam (1)-English' in opt or 'Rambam (1)-Hebrew' in opt:
-                rambamenglish(dor, session, opt)
+            if 'Chumash' in opt:
+                ensure_material("Chumash", session, lambda: chabadget(dor, opt, session),
+                                 lambda: sefaria_chumash_get(week, session))
+            if 'Tanya' in opt:
+                ensure_material("Tanya", session, lambda: chabadget(dor, opt, session),
+                                 lambda: sefaria_tanya_get(week, session))
+            if rambam_requested:
+                ensure_material("Rambam", session, lambda: rambamenglish(dor, session, opt),
+                                 lambda: sefaria_rambam_get(week, session, opt))
         if source == True:
             if 'Rambam (3)-Bilingual' in opt or 'Rambam (3)-English' in opt or 'Rambam (1)-Bilingual' in opt or 'Rambam (1)-English' in opt or 'Rambam (1)-Hebrew' in opt:
-                rambamenglish(dor, session, opt)
+                ensure_material("Rambam", session, lambda: rambamenglish(dor, session, opt),
+                                 lambda: sefaria_rambam_get(week, session, opt))
             elif 'Rambam (3)-Hebrew' in opt and os.path.exists(f"dvar{session2}.pdf") == False:
-                rambamenglish(dor, session, opt)
+                ensure_material("Rambam", session, lambda: rambamenglish(dor, session, opt),
+                                 lambda: sefaria_rambam_get(week, session, opt))
 
         if 'Hayom Yom' in opt:
             hayomyom(dor, session)
