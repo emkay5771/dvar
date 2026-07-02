@@ -318,12 +318,32 @@ _SEFARIA_HTML_HEAD = """<html><head><meta charset="utf-8"><style>
 body { font-family: 'Noto Sans Hebrew', 'David', 'Times New Roman', serif; direction: rtl; padding: 2em; }
 .hebrew { font-size: 1.3em; line-height: 1.8; margin-bottom: 1.2em; }
 .english { font-size: 1.1em; line-height: 1.6; direction: ltr; text-align: left; margin-bottom: 1.2em; }
+.bilingual-row { display: flex; gap: 1.5em; margin-bottom: 0.8em; align-items: flex-start; }
+.bilingual-row .hebrew { flex: 1; margin-bottom: 0; }
+.bilingual-row .english { flex: 1; margin-bottom: 0; }
 .rashi { margin-top: 0.8em; padding-right: 1.5em; font-size: 1em; color: #333; border-right: 3px solid #999; }
 .rashi-title { font-weight: bold; margin-bottom: 0.4em; }
 h1 { text-align: center; font-size: 1.4em; }
 </style></head><body>
 """
 _SEFARIA_HTML_END = "</body></html>"
+
+def _paired_bilingual_html(hebrew_verses, english_verses):
+    # Side-by-side (Hebrew right column, English left column) per corresponding
+    # verse/segment, rather than one long Hebrew block followed by one long English
+    # block -- Sefaria returns 'he'/'text' as parallel, index-aligned lists.
+    rows = max(len(hebrew_verses), len(english_verses))
+    parts = []
+    for i in range(rows):
+        he = hebrew_verses[i] if i < len(hebrew_verses) else ""
+        en = english_verses[i] if i < len(english_verses) else ""
+        parts.append(
+            '<div class="bilingual-row">'
+            f'<div class="hebrew">{he}</div>'
+            f'<div class="english">{en}</div>'
+            '</div>'
+        )
+    return "".join(parts)
 
 def _flatten_sefaria_text(value):
     # Sefaria's 'he'/'text' fields can be a plain string, or nested lists of strings
@@ -362,12 +382,19 @@ def sefaria_fetch_text(ref):
         return None
 
 def sefaria_fetch_rashi(ref):
-    try:
-        resp = requests.get(f"{SEFARIA_API_BASE}/links/{requests.utils.quote(ref)}", timeout=15)
-        resp.raise_for_status()
-        links = resp.json()
-    except Exception:
-        logger.warning("Could not fetch Sefaria Rashi links for ref '%s'", ref, exc_info=True)
+    # A full aliyah's link list can be large (thousands of commentary links across many
+    # verses), which is more prone to a dropped connection mid-download than the smaller
+    # /texts calls -- retry once before giving up rather than silently losing Rashi.
+    links = None
+    for attempt in range(2):
+        try:
+            resp = requests.get(f"{SEFARIA_API_BASE}/links/{requests.utils.quote(ref)}", timeout=30)
+            resp.raise_for_status()
+            links = resp.json()
+            break
+        except Exception:
+            logger.warning("Could not fetch Sefaria Rashi links for ref '%s' (attempt %d)", ref, attempt + 1, exc_info=True)
+    if links is None:
         return []
     comments = []
     for link in links or []:
@@ -499,15 +526,15 @@ def sefaria_rambam_get(week, session, opt): # 3rd-tier Rambam fallback via Sefar
                 text_data = sefaria_fetch_text(ref)
                 if not text_data:
                     continue
+                hebrew_verses = _flatten_sefaria_text(text_data.get("he")) if not lang_en_only else []
+                english_verses = _flatten_sefaria_text(text_data.get("text")) if (lang_both or lang_en_only) else []
                 block = ""
-                if not lang_en_only:
-                    hebrew_verses = _flatten_sefaria_text(text_data.get("he"))
-                    if hebrew_verses:
-                        block += f'<div class="hebrew">{"<br>".join(hebrew_verses)}</div>'
-                if lang_both or lang_en_only:
-                    english_verses = _flatten_sefaria_text(text_data.get("text"))
-                    if english_verses:
-                        block += f'<div class="english">{"<br>".join(english_verses)}</div>'
+                if lang_both and (hebrew_verses or english_verses):
+                    block = _paired_bilingual_html(hebrew_verses, english_verses)
+                elif hebrew_verses:
+                    block = f'<div class="hebrew">{"<br>".join(hebrew_verses)}</div>'
+                elif english_verses:
+                    block = f'<div class="english">{"<br>".join(english_verses)}</div>'
                 if block:
                     sections_html.append(block)
             if not sections_html:
