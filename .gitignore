@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+
+# Runtime-generated artifacts written to the app's working directory
+dvar*.pdf
+Chumash*.pdf
+Tanya*.pdf
+Rambam*.pdf
+Hayom*.pdf
+Shnayim*.pdf
+output_dynamic*.pdf
+temp*.pdf
+dvar.png
