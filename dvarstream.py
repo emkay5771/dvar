@@ -65,6 +65,27 @@ def render_html_to_pdf(html, pdf_options):
     finally:
         driver.quit()
 
+def fetch_chabad_page(url, pdf_options, attempts=3, wait_seconds=10, extra_sleep=0):
+    # Chabad.org's Cloudflare bot check is intermittent, not a hard block -- observed live,
+    # the exact same page succeeds outright on one request and times out on the very next.
+    # A fresh browser session on retry often gets through, so retry a few times with a
+    # fresh driver before giving up and letting the caller fall through to the next tier.
+    last_exc = None
+    for attempt in range(1, attempts + 1):
+        driver = webdriver.Chrome(options=options)
+        try:
+            driver.get(url)
+            WebDriverWait(driver, wait_seconds).until(EC.presence_of_element_located((By.ID, "content")))
+            if extra_sleep:
+                time.sleep(extra_sleep)
+            return driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
+        except Exception as exc:
+            last_exc = exc
+            logger.warning("Chabad.org fetch attempt %d/%d failed for %s", attempt, attempts, url, exc_info=True)
+        finally:
+            driver.quit()
+    raise last_exc
+
 def dvarget(session2): # attempts to retrieve dvar malchus pdf
     # dvar{session2}.pdf is a cross-user cache (same weekly booklet for everyone within
     # the cache TTL), so guard the check-then-download-then-write sequence with a lock:
@@ -165,19 +186,14 @@ def chabadget(dor, opt, session): # retrieves chumash and tanya from chabad.org
         appended_any = False
         if 'Chumash' in opt:
             for i in dor:
-                driver = webdriver.Chrome(options=options)
                 try:
-                    driver.get(f"https://www.chabad.org/dailystudy/torahreading.asp?tdate={i}#lt=he")
-                    wait = WebDriverWait(driver, 10)
-                    element = wait.until(EC.presence_of_element_located((By.ID, "content")))
-                    pdf = driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
+                    url = f"https://www.chabad.org/dailystudy/torahreading.asp?tdate={i}#lt=he"
+                    pdf = fetch_chabad_page(url, pdf_options)
                 except Exception:
                     # Leave Chumash{session}.pdf absent on failure (rather than crash the
                     # whole Streamlit run) so the caller can fall through to the next tier.
                     logger.warning("Chabad.org Chumash fetch failed for %s", i, exc_info=True)
                     continue
-                finally:
-                    driver.quit()
                 with open(f"temp{session}.pdf", "ab") as f:
                     f.write(b64decode(pdf["data"]))
                 merger.append(f"temp{session}.pdf")
@@ -193,18 +209,12 @@ def chabadget(dor, opt, session): # retrieves chumash and tanya from chabad.org
         appended_any = False
         if 'Tanya' in opt:
             for i in dor:
-                driver = webdriver.Chrome(options=options)
                 try:
-                    driver.get(f"https://www.chabad.org/dailystudy/tanya.asp?tdate={i}&commentary=false#lt=he")
-                    wait = WebDriverWait(driver, 10)
-                    element = wait.until(EC.presence_of_element_located((By.ID, "content")))
-                    time.sleep(3)
-                    pdf = driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
+                    url = f"https://www.chabad.org/dailystudy/tanya.asp?tdate={i}&commentary=false#lt=he"
+                    pdf = fetch_chabad_page(url, pdf_options, extra_sleep=3)
                 except Exception:
                     logger.warning("Chabad.org Tanya fetch failed for %s", i, exc_info=True)
                     continue
-                finally:
-                    driver.quit()
                 with open(f"temp{session}.pdf", "ab") as f:
                     f.write(b64decode(pdf["data"]))
                 merger2.append(f"temp{session}.pdf")
@@ -228,7 +238,6 @@ def rambamenglish(dor, session, opt): # retrieves all rambam versions from chaba
     if os.path.exists(f"Rambam{session}.pdf") != True:
         appended_any = False
         for i in dor:
-            driver = webdriver.Chrome(options=options)
             lang = ""
             chapters = ""
             if "Rambam (3)-Bilingual" in opt:
@@ -250,15 +259,11 @@ def rambamenglish(dor, session, opt): # retrieves all rambam versions from chaba
                 lang = "primary"
                 chapters = "1"
             try:
-                driver.get(f"https://www.chabad.org/dailystudy/rambam.asp?rambamchapters={chapters}&tdate={i}#lt={lang}")
-                wait = WebDriverWait(driver, 10)
-                element = wait.until(EC.presence_of_element_located((By.ID, "content")))
-                pdf = driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
+                url = f"https://www.chabad.org/dailystudy/rambam.asp?rambamchapters={chapters}&tdate={i}#lt={lang}"
+                pdf = fetch_chabad_page(url, pdf_options)
             except Exception:
                 logger.warning("Chabad.org Rambam fetch failed for %s", i, exc_info=True)
                 continue
-            finally:
-                driver.quit()
             with open(f"temp{session}.pdf", "ab") as f:
                 f.write(b64decode(pdf["data"]))
 
@@ -283,12 +288,9 @@ def hayomyom(dor, session): #gets hayom yom from chabad.org
     if os.path.exists(f"Hayom{session}.pdf") != True:
         appended_any = False
         for i in dor:
-            driver = webdriver.Chrome(options=options)
             try:
-                driver.get(f"https://www.chabad.org/dailystudy/hayomyom.asp?tdate={i}")
-                wait = WebDriverWait(driver, 10)
-                element = wait.until(EC.presence_of_element_located((By.ID, "content")))
-                pdf = driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
+                url = f"https://www.chabad.org/dailystudy/hayomyom.asp?tdate={i}"
+                pdf = fetch_chabad_page(url, pdf_options)
             except Exception:
                 # No further fallback exists for Hayom Yom (Sefaria doesn't have it and
                 # it's not part of Dvar Malchus's contents either) -- surface a warning
@@ -296,8 +298,6 @@ def hayomyom(dor, session): #gets hayom yom from chabad.org
                 logger.warning("Chabad.org Hayom Yom fetch failed for %s; no fallback source available", i, exc_info=True)
                 st.warning("Could not fetch Hayom Yom from Chabad.org, and no alternative source is available for it. Skipping.")
                 continue
-            finally:
-                driver.quit()
             with open(f"temp{session}.pdf", "ab") as f:
                 f.write(b64decode(pdf["data"]))
 
