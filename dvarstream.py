@@ -15,19 +15,15 @@ from datetime import datetime as dt #type: ignore
 from datetime import timedelta #type: ignore
 import requests #type: ignore
 import streamlit as st #type: ignore
-import markdownlit
-from markdownlit import mdlit as mdlit
-import streamlit_toggle as stt
-from streamlit_pills_multiselect import pills
-import PyPDF2 #type: ignore
-from PyPDF2 import PdfMerger #type: ignore
+import pypdf as PyPDF2 #type: ignore
+from pypdf import PdfWriter as PdfMerger #type: ignore
 import glob
 from pyluach import parshios, dates
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("dvarstream")
 
-st.set_page_config(page_title="Dvar Creator (BETA)", page_icon="📚", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Dvar Creator (BETA)", page_icon="📚", layout="centered", initial_sidebar_state="collapsed")
 
 # Chrome flags below were tuned specifically for how Streamlit Cloud needs headless
 # Chrome configured (sandboxing, /dev/shm size, download prefs). Do not change these
@@ -52,11 +48,16 @@ service = Service(chrome_driver_path)
 _dvar_cache_lock = threading.Lock()
 _shnayim_cache_lock = threading.Lock()
 
+@st.cache_data(ttl="24h", show_spinner=False)
 def render_html_to_pdf(html, pdf_options):
     # Shared by the Sefaria-sourced builders below: renders a locally-authored HTML string
     # (rather than a scraped page) through the same headless-Chrome print-to-PDF pipeline
     # already used for chabad.org, so Hebrew RTL layout/fonts come from the browser for
     # free and we don't need a second PDF-generation library.
+    # Cached cross-session by (html, pdf_options): 'html' already bakes in the date/content
+    # and 'pdf_options' bakes in the user's scale setting, so this naturally caches at
+    # exactly the right granularity (same day + same scale = same render, shared across
+    # everyone) without caching across genuinely different content or scales.
     driver = webdriver.Chrome(options=options)
     try:
         encoded = b64encode(html.encode("utf-8")).decode("ascii")
@@ -65,11 +66,19 @@ def render_html_to_pdf(html, pdf_options):
     finally:
         driver.quit()
 
+@st.cache_data(ttl="24h", show_spinner=False)
 def fetch_chabad_page(url, pdf_options, attempts=3, wait_seconds=10, extra_sleep=0):
     # Chabad.org's Cloudflare bot check is intermittent, not a hard block -- observed live,
     # the exact same page succeeds outright on one request and times out on the very next.
     # A fresh browser session on retry often gets through, so retry a few times with a
     # fresh driver before giving up and letting the caller fall through to the next tier.
+    # Cached cross-session by (url, pdf_options) -- url already encodes the date and any
+    # material-specific params (chapters/language), pdf_options encodes the user's scale
+    # setting, so different scales or days naturally get separate cache entries. A failed
+    # fetch raises rather than returns, and st.cache_data never caches a raised exception,
+    # so failures are always retried fresh rather than "cached as broken". Fewer redundant
+    # hits against chabad.org across all users also means less chance of tripping whatever
+    # triggers its intermittent Cloudflare check in the first place.
     last_exc = None
     for attempt in range(1, attempts + 1):
         driver = webdriver.Chrome(options=options)
@@ -372,14 +381,14 @@ def sefaria_calendar(date_str):
         logger.warning("Could not fetch Sefaria calendar for %s", date_str, exc_info=True)
         return []
 
+@st.cache_data(ttl="24h", show_spinner=False)
 def sefaria_fetch_text(ref):
-    try:
-        resp = requests.get(f"{SEFARIA_API_BASE}/texts/{requests.utils.quote(ref)}", params={"context": 0}, timeout=15)
-        resp.raise_for_status()
-        return resp.json()
-    except Exception:
-        logger.warning("Could not fetch Sefaria text for ref '%s'", ref, exc_info=True)
-        return None
+    # Raises on failure (rather than returning None) so st.cache_data doesn't cache a
+    # transient failure -- callers already wrap this call in a per-day try/except that
+    # treats any exception as "skip this day", identical to the old None-check behavior.
+    resp = requests.get(f"{SEFARIA_API_BASE}/texts/{requests.utils.quote(ref)}", params={"context": 0}, timeout=15)
+    resp.raise_for_status()
+    return resp.json()
 
 def sefaria_fetch_rashi(ref):
     # A full aliyah's link list can be large (thousands of commentary links across many
@@ -830,25 +839,55 @@ def dateset():
     logger.info(f"Session: {session2}")
     return session2
 
+@st.cache_data(ttl="5m")
+def check_source_health():
+    # Best-effort only: a plain `requests` hit doesn't perfectly reflect what the real
+    # headless-Chrome scraper experiences, but it's a cheap, useful signal for the user
+    # before they submit -- short-circuited to a 5s timeout per source so a hung check
+    # never holds up page load.
+    statuses = {}
+    try:
+        r = requests.get("https://dvarmalchus.org", timeout=5)
+        statuses["Dvar Malchus"] = r.status_code < 400
+    except Exception:
+        statuses["Dvar Malchus"] = False
+    try:
+        r = requests.get("https://www.chabad.org/dailystudy/default_cdo/jewish/Daily-Study.htm", timeout=5)
+        # "Just a moment" is the exact Cloudflare bot-challenge marker seen live on
+        # chabad.org -- a 200 alone doesn't mean the real page came back.
+        statuses["Chabad.org"] = r.status_code < 400 and "Just a moment" not in r.text
+    except Exception:
+        statuses["Chabad.org"] = False
+    try:
+        r = requests.get(f"{SEFARIA_API_BASE}/calendars", timeout=5)
+        statuses["Sefaria"] = r.status_code < 400
+    except Exception:
+        statuses["Sefaria"] = False
+    return statuses
+
 with st.form(key="dvarform", clear_on_submit=False): #streamlit form for user input
     st.title("Dvar Creator 📚 (BETA)")
     st.info("Need more than 1 week? Check out 📖[Chitas Collator](https://chitas-collator.streamlit.app/)!")
-    markdownlit.mdlit("""This app is designed to create a printout for Chitas, Rambam, plus a few other things. To get the materials directly and support the original publishers, go to @(**[blue]Dvar Malchus[/blue]**)(https://dvarmalchus.org/)
-    and @(🔥)(**[orange]Chabad.org[/orange]**)(https://www.chabad.org/dailystudy/default_cdo/jewish/Daily-Study.htm/).
-    For Chumash, Tanya, and Rambam, if both of those are unavailable this app will fall back to @(**[green]Sefaria[/green]**)(https://www.sefaria.org/). Hayom Yom, Project Likutei Sichos, Maamarim, and the Haftorah have no further fallback if Chabad.org is unavailable.
-    """)
+    st.markdown("""This app is designed to create a printout for Chitas, Rambam, plus a few other things. To get the materials directly and support the original publishers, go to :blue[**[Dvar Malchus](https://dvarmalchus.org/)**]
+    and 🔥 :orange[**[Chabad.org](https://www.chabad.org/dailystudy/default_cdo/jewish/Daily-Study.htm/)**].
+    For Chumash, Tanya, and Rambam, if both of those are unavailable this app will fall back to :green[**[Sefaria](https://www.sefaria.org/)**]. Hayom Yom, Project Likutei Sichos, Maamarim, and the Haftorah have no further fallback if Chabad.org is unavailable.
+    """, unsafe_allow_html=True)
+    _health = check_source_health()
+    _health_cols = st.columns(len(_health))
+    for _col, (_source_name, _is_healthy) in zip(_health_cols, _health.items()):
+        _col.markdown(f"{'✅' if _is_healthy else '⚠️'} {_source_name}")
     session2 = dateset()
     date1 = date.today().strftime('%Y, %-m, %-d')
     year, day, month = date1.split(", ")
     year, day, month = int(year), int(day), int(month)
     parsha = parshios.getparsha_string(dates.GregorianDate(year, day, month), israel=False, hebrew=True)
-    week = pills("Select which days of the week you would like to print.", options=['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos'], multiselect=True, clearable=True, index=None)
+    week = st.pills("Select which days of the week you would like to print.", options=['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos'], selection_mode="multi", default=None)
     st.write("**Select which materials you would like to print.** (Select as many as you'd like!)")
     #TODO: add tehillim and rename to "Chitas"
-    basics = pills('Basics:', options=['Chumash', 'Tanya', 'Hayom Yom'], multiselect=True, clearable=True, index=None)
-    rambamopts = pills('Rambam:', options=['Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English'], multiselect=True, clearable=True, index=None)
-    extras = pills('MISC:', options=['Project Likutei Sichos (Hebrew)', 'Maamarim', 'Krias Hatorah (includes Haftorah)', 'Haftorah', 'Shnayim Mikra'], multiselect=True, clearable=True, index=None)
-    source = stt.st_toggle_switch(label ='Try to use Dvar Malchus, or get from Chabad.org? If toggled on (green), it will attempt to get from Dvar Malchus.', default_value=True, label_after=True, inactive_color='#780c21', active_color='#0c7822', track_color='#0c4c78')  
+    basics = st.pills('Basics:', options=['Chumash', 'Tanya', 'Hayom Yom'], selection_mode="multi", default=None)
+    rambamopts = st.pills('Rambam:', options=['Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English'], selection_mode="multi", default=None)
+    extras = st.pills('MISC:', options=['Project Likutei Sichos (Hebrew)', 'Maamarim', 'Krias Hatorah (includes Haftorah)', 'Haftorah', 'Shnayim Mikra'], selection_mode="multi", default=None)
+    source = st.toggle(label='Try to use Dvar Malchus, or get from Chabad.org? If toggled on, it will attempt to get from Dvar Malchus.', value=True)
     with st.expander("Advanced Options"):
         cover = st.checkbox('Include the cover page from Dvar Malchus?', value=False)
         scaleslide = st.slider('Change the scale of Chumash and Tanya from Chabad.Org. Default is 100%.', 30, 100, 100)
@@ -868,8 +907,8 @@ if submit_button: #if the user submits the form, run the following code, which w
     if 'id' not in st.session_state:
         st.session_state['id'] = dt.now()
     opt = []
-    # pills() returns None (not []) when nothing is selected, so guard with truthiness
-    # instead of exception-driven control flow.
+    # st.pills() in multi-select mode returns [] when nothing is selected, but guard
+    # with truthiness anyway in case a future Streamlit change reintroduces None.
     if basics:
         logger.info("appending selected basics")
         opt += basics
@@ -889,9 +928,8 @@ if submit_button: #if the user submits the form, run the following code, which w
     optconv = []
     dor = []
     opt = sorted(opt, key=optorder.index)
-    # pills() returns None when no day is selected. Normalize to [] here (rather than
-    # relying on a bare except to swallow the resulting TypeError) so the "week == []"
-    # checks below actually fire instead of silently comparing None == [].
+    # st.pills() already returns [] (not None) when no day is selected, but normalize
+    # defensively so the "week == []" checks below are guaranteed to fire correctly.
     week = week or []
     week = sorted(week, key=weekorder.index)
     daytoheb(week, dow)
@@ -984,13 +1022,13 @@ if submit_button: #if the user submits the form, run the following code, which w
     cleanup_stale("dvar", f'dvar{session2}.pdf', timedelta(hours=14))
     cleanup_stale("Shnayim", f'Shnayim{session2}.pdf', timedelta(hours=14))
     cleanup_stale("output_dynamic", f'output_dynamic{session}.pdf', timedelta(minutes=1))
-markdownlit.mdlit("**Any major bugs noticed? Features that you'd like to see? Comments? Email me [📧 here!](mailto:mkievman@outlook.com)**")
+st.markdown("**Any major bugs noticed? Features that you'd like to see? Comments? Email me [📧 here!](mailto:mkievman@outlook.com)**", unsafe_allow_html=True)
 
 if not submit_button:
     with st.expander("**Changelog:**"):
-        markdownlit.mdlit("**New in latest update (7-2-26)**: <br/> **[FIX]** Dvar Malchus downloads were silently failing in headless mode; fixed by explicitly allowing Chrome to save the file. <br/> **[FIX]** Chabad.org's daily study pages had started intermittently failing (an anti-bot check); fetches now retry automatically with a fresh session before giving up. <br/> **[NEW]** Added Sefaria as a 3rd fallback source for Chumash (with Rashi), Tanya, and Rambam if both Dvar Malchus and Chabad.org are unavailable, including correct handling of combined/double-parsha weeks. <br/> **[FIX]** Bilingual Rambam now shows Hebrew and English side by side instead of one after the other. <br/> **[FIX]** A single Chabad.org or Sefaria hiccup on one material no longer crashes the whole app.")
-        markdownlit.mdlit("**Past Changes (1-17-24)**: <br/> **[FIX]** Updated location of Dvar Malchus download button.")
-        markdownlit.mdlit("**Past Changes (7-17-23)**: <br/> **1:** Repeated compilations of materials from Dvar Malchus should be considerably faster. <br/> **2:** Shnayim mikra gets considerably faster on subsequent reruns. <br/> **3:** Fixes to maamarim and sichos to fail less often.")
+        st.markdown("**New in latest update (7-2-26)**: <br/> **[FIX]** Dvar Malchus downloads were silently failing in headless mode; fixed by explicitly allowing Chrome to save the file. <br/> **[FIX]** Chabad.org's daily study pages had started intermittently failing (an anti-bot check); fetches now retry automatically with a fresh session before giving up. <br/> **[NEW]** Added Sefaria as a 3rd fallback source for Chumash (with Rashi), Tanya, and Rambam if both Dvar Malchus and Chabad.org are unavailable, including correct handling of combined/double-parsha weeks. <br/> **[FIX]** Bilingual Rambam now shows Hebrew and English side by side instead of one after the other. <br/> **[FIX]** A single Chabad.org or Sefaria hiccup on one material no longer crashes the whole app.", unsafe_allow_html=True)
+        st.markdown("**Past Changes (1-17-24)**: <br/> **[FIX]** Updated location of Dvar Malchus download button.", unsafe_allow_html=True)
+        st.markdown("**Past Changes (7-17-23)**: <br/> **1:** Repeated compilations of materials from Dvar Malchus should be considerably faster. <br/> **2:** Shnayim mikra gets considerably faster on subsequent reruns. <br/> **3:** Fixes to maamarim and sichos to fail less often.", unsafe_allow_html=True)
 if submit_button:
     if os.path.exists(f"output_dynamic{session}.pdf"):
         with st.expander("NOTE: If you are reciving last weeks materials, please click here."):
