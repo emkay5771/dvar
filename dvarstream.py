@@ -988,7 +988,8 @@ markdownlit.mdlit("**Any major bugs noticed? Features that you'd like to see? Co
 
 if not submit_button:
     with st.expander("**Changelog:**"):
-        markdownlit.mdlit("**New in latest update (1-17-24)**: <br/> **[FIX]** Updated location of Dvar Malchus download button.")
+        markdownlit.mdlit("**New in latest update (7-2-26)**: <br/> **[FIX]** Dvar Malchus downloads were silently failing in headless mode; fixed by explicitly allowing Chrome to save the file. <br/> **[FIX]** Chabad.org's daily study pages had started intermittently failing (an anti-bot check); fetches now retry automatically with a fresh session before giving up. <br/> **[NEW]** Added Sefaria as a 3rd fallback source for Chumash (with Rashi), Tanya, and Rambam if both Dvar Malchus and Chabad.org are unavailable, including correct handling of combined/double-parsha weeks. <br/> **[FIX]** Bilingual Rambam now shows Hebrew and English side by side instead of one after the other. <br/> **[FIX]** A single Chabad.org or Sefaria hiccup on one material no longer crashes the whole app.")
+        markdownlit.mdlit("**Past Changes (1-17-24)**: <br/> **[FIX]** Updated location of Dvar Malchus download button.")
         markdownlit.mdlit("**Past Changes (7-17-23)**: <br/> **1:** Repeated compilations of materials from Dvar Malchus should be considerably faster. <br/> **2:** Shnayim mikra gets considerably faster on subsequent reruns. <br/> **3:** Fixes to maamarim and sichos to fail less often.")
 if submit_button:
     if os.path.exists(f"output_dynamic{session}.pdf"):
