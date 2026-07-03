@@ -23,7 +23,7 @@ from pyluach import parshios, dates
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("dvarstream")
 
-st.set_page_config(page_title="Dvar Creator (BETA)", page_icon="📚", layout="centered", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Dvar Creator (BETA)", page_icon="📚", layout="wide", initial_sidebar_state="collapsed")
 
 # Chrome flags below were tuned specifically for how Streamlit Cloud needs headless
 # Chrome configured (sandboxing, /dev/shm size, download prefs). Do not change these
@@ -841,8 +841,8 @@ with st.form(key="dvarform", clear_on_submit=False): #streamlit form for user in
     st.title("Dvar Creator 📚 (BETA)")
     st.info("Need more than 1 week? Check out 📖[Chitas Collator](https://chitas-collator.streamlit.app/)!")
     st.markdown("""This app is designed to create a printout for Chitas, Rambam, plus a few other things. To get the materials directly and support the original publishers, go to ![](https://www.google.com/s2/favicons?domain=dvarmalchus.org&sz=16) :blue[**[Dvar Malchus](https://dvarmalchus.org/)**]
-    and 🔥 ![](https://www.google.com/s2/favicons?domain=chabad.org&sz=16) :orange[**[Chabad.org](https://www.chabad.org/dailystudy/default_cdo/jewish/Daily-Study.htm/)**].
-    For Chumash, Tanya, and Rambam, if both of those are unavailable this app will fall back to ![](https://www.google.com/s2/favicons?domain=sefaria.org&sz=16) :green[**[Sefaria](https://www.sefaria.org/)**]. Hayom Yom, Project Likutei Sichos, Maamarim, and the Haftorah have no further fallback if Chabad.org is unavailable.
+    and ![](https://www.google.com/s2/favicons?domain=chabad.org&sz=16) :orange[**[Chabad.org](https://www.chabad.org/dailystudy/default_cdo/jewish/Daily-Study.htm/)**].
+    For Chumash, Tanya, and Rambam, if both of those are unavailable this app will fall back to ![](https://www.google.com/s2/favicons?domain=sefaria.org&sz=16) :green[**[Sefaria](https://www.sefaria.org/)**].
     """, unsafe_allow_html=True)
     session2 = dateset()
     date1 = date.today().strftime('%Y, %-m, %-d')
@@ -994,7 +994,7 @@ st.markdown("**Any major bugs noticed? Features that you'd like to see? Comments
 
 if not submit_button:
     with st.expander("**Changelog:**"):
-        st.markdown("**New in latest update (7-3-26)**: <br/> **[FIX]** Fixed a crash when two people generated a booklet from Dvar Malchus at nearly the same time. <br/> **[NEW]** Modernized the app's dependencies (Streamlit and others) and swapped out a few unmaintained UI components for Streamlit's own native ones. <br/> **[NEW]** Added a custom color theme. <br/> **[NEW]** Chumash/Tanya/Rambam/Hayom Yom fetches are now shared across everyone requesting the same day, so repeat generations are faster and put less load on Chabad.org.", unsafe_allow_html=True)
+        st.markdown("**New in latest update (7-3-26)**: <br/> **[FIX]** Fixed a crash when two people generated a booklet from Dvar Malchus at nearly the same time. <br/> **[NEW]** Modernized the app's dependencies (Streamlit and others) and swapped out a few unmaintained UI components for Streamlit's own native ones. <br/> **[NEW]** Added a custom dark theme. <br/> **[NEW]** Chumash/Tanya/Rambam/Hayom Yom fetches are now shared across everyone requesting the same day, so repeat generations are faster and put less load on Chabad.org.", unsafe_allow_html=True)
         st.markdown("**Past Changes (7-2-26)**: <br/> **[FIX]** Dvar Malchus downloads were silently failing in headless mode; fixed by explicitly allowing Chrome to save the file. <br/> **[FIX]** Chabad.org's daily study pages had started intermittently failing (an anti-bot check); fetches now retry automatically with a fresh session before giving up. <br/> **[NEW]** Added Sefaria as a 3rd fallback source for Chumash (with Rashi), Tanya, and Rambam if both Dvar Malchus and Chabad.org are unavailable, including correct handling of combined/double-parsha weeks. <br/> **[FIX]** Bilingual Rambam now shows Hebrew and English side by side instead of one after the other. <br/> **[FIX]** A single Chabad.org or Sefaria hiccup on one material no longer crashes the whole app.", unsafe_allow_html=True)
         st.markdown("**Past Changes (1-17-24)**: <br/> **[FIX]** Updated location of Dvar Malchus download button.", unsafe_allow_html=True)
         st.markdown("**Past Changes (7-17-23)**: <br/> **1:** Repeated compilations of materials from Dvar Malchus should be considerably faster. <br/> **2:** Shnayim mikra gets considerably faster on subsequent reruns. <br/> **3:** Fixes to maamarim and sichos to fail less often.", unsafe_allow_html=True)
