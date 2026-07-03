@@ -158,10 +158,8 @@ def _dvarget_locked(session2):
         driver.quit()
         raise RuntimeError("dvarmalchus.org download button not found")
 
-    driver.save_screenshot("dvar.png")
     logger.info("waiting for download")
     time.sleep(10)
-    os.remove("dvar.png")
 
     try:
         # Our own app-managed files all use one of these known prefixes; anything else
@@ -839,43 +837,13 @@ def dateset():
     logger.info(f"Session: {session2}")
     return session2
 
-@st.cache_data(ttl="5m")
-def check_source_health():
-    # Best-effort only: a plain `requests` hit doesn't perfectly reflect what the real
-    # headless-Chrome scraper experiences, but it's a cheap, useful signal for the user
-    # before they submit -- short-circuited to a 5s timeout per source so a hung check
-    # never holds up page load.
-    statuses = {}
-    try:
-        r = requests.get("https://dvarmalchus.org", timeout=5)
-        statuses["Dvar Malchus"] = r.status_code < 400
-    except Exception:
-        statuses["Dvar Malchus"] = False
-    try:
-        r = requests.get("https://www.chabad.org/dailystudy/default_cdo/jewish/Daily-Study.htm", timeout=5)
-        # "Just a moment" is the exact Cloudflare bot-challenge marker seen live on
-        # chabad.org -- a 200 alone doesn't mean the real page came back.
-        statuses["Chabad.org"] = r.status_code < 400 and "Just a moment" not in r.text
-    except Exception:
-        statuses["Chabad.org"] = False
-    try:
-        r = requests.get(f"{SEFARIA_API_BASE}/calendars", timeout=5)
-        statuses["Sefaria"] = r.status_code < 400
-    except Exception:
-        statuses["Sefaria"] = False
-    return statuses
-
 with st.form(key="dvarform", clear_on_submit=False): #streamlit form for user input
     st.title("Dvar Creator 📚 (BETA)")
     st.info("Need more than 1 week? Check out 📖[Chitas Collator](https://chitas-collator.streamlit.app/)!")
-    st.markdown("""This app is designed to create a printout for Chitas, Rambam, plus a few other things. To get the materials directly and support the original publishers, go to :blue[**[Dvar Malchus](https://dvarmalchus.org/)**]
-    and 🔥 :orange[**[Chabad.org](https://www.chabad.org/dailystudy/default_cdo/jewish/Daily-Study.htm/)**].
-    For Chumash, Tanya, and Rambam, if both of those are unavailable this app will fall back to :green[**[Sefaria](https://www.sefaria.org/)**]. Hayom Yom, Project Likutei Sichos, Maamarim, and the Haftorah have no further fallback if Chabad.org is unavailable.
+    st.markdown("""This app is designed to create a printout for Chitas, Rambam, plus a few other things. To get the materials directly and support the original publishers, go to ![](https://www.google.com/s2/favicons?domain=dvarmalchus.org&sz=16) :blue[**[Dvar Malchus](https://dvarmalchus.org/)**]
+    and 🔥 ![](https://www.google.com/s2/favicons?domain=chabad.org&sz=16) :orange[**[Chabad.org](https://www.chabad.org/dailystudy/default_cdo/jewish/Daily-Study.htm/)**].
+    For Chumash, Tanya, and Rambam, if both of those are unavailable this app will fall back to ![](https://www.google.com/s2/favicons?domain=sefaria.org&sz=16) :green[**[Sefaria](https://www.sefaria.org/)**]. Hayom Yom, Project Likutei Sichos, Maamarim, and the Haftorah have no further fallback if Chabad.org is unavailable.
     """, unsafe_allow_html=True)
-    _health = check_source_health()
-    _health_cols = st.columns(len(_health))
-    for _col, (_source_name, _is_healthy) in zip(_health_cols, _health.items()):
-        _col.markdown(f"{'✅' if _is_healthy else '⚠️'} {_source_name}")
     session2 = dateset()
     date1 = date.today().strftime('%Y, %-m, %-d')
     year, day, month = date1.split(", ")
@@ -1026,7 +994,8 @@ st.markdown("**Any major bugs noticed? Features that you'd like to see? Comments
 
 if not submit_button:
     with st.expander("**Changelog:**"):
-        st.markdown("**New in latest update (7-2-26)**: <br/> **[FIX]** Dvar Malchus downloads were silently failing in headless mode; fixed by explicitly allowing Chrome to save the file. <br/> **[FIX]** Chabad.org's daily study pages had started intermittently failing (an anti-bot check); fetches now retry automatically with a fresh session before giving up. <br/> **[NEW]** Added Sefaria as a 3rd fallback source for Chumash (with Rashi), Tanya, and Rambam if both Dvar Malchus and Chabad.org are unavailable, including correct handling of combined/double-parsha weeks. <br/> **[FIX]** Bilingual Rambam now shows Hebrew and English side by side instead of one after the other. <br/> **[FIX]** A single Chabad.org or Sefaria hiccup on one material no longer crashes the whole app.", unsafe_allow_html=True)
+        st.markdown("**New in latest update (7-3-26)**: <br/> **[FIX]** Fixed a crash when two people generated a booklet from Dvar Malchus at nearly the same time. <br/> **[NEW]** Modernized the app's dependencies (Streamlit and others) and swapped out a few unmaintained UI components for Streamlit's own native ones. <br/> **[NEW]** Added a custom color theme. <br/> **[NEW]** Chumash/Tanya/Rambam/Hayom Yom fetches are now shared across everyone requesting the same day, so repeat generations are faster and put less load on Chabad.org.", unsafe_allow_html=True)
+        st.markdown("**Past Changes (7-2-26)**: <br/> **[FIX]** Dvar Malchus downloads were silently failing in headless mode; fixed by explicitly allowing Chrome to save the file. <br/> **[FIX]** Chabad.org's daily study pages had started intermittently failing (an anti-bot check); fetches now retry automatically with a fresh session before giving up. <br/> **[NEW]** Added Sefaria as a 3rd fallback source for Chumash (with Rashi), Tanya, and Rambam if both Dvar Malchus and Chabad.org are unavailable, including correct handling of combined/double-parsha weeks. <br/> **[FIX]** Bilingual Rambam now shows Hebrew and English side by side instead of one after the other. <br/> **[FIX]** A single Chabad.org or Sefaria hiccup on one material no longer crashes the whole app.", unsafe_allow_html=True)
         st.markdown("**Past Changes (1-17-24)**: <br/> **[FIX]** Updated location of Dvar Malchus download button.", unsafe_allow_html=True)
         st.markdown("**Past Changes (7-17-23)**: <br/> **1:** Repeated compilations of materials from Dvar Malchus should be considerably faster. <br/> **2:** Shnayim mikra gets considerably faster on subsequent reruns. <br/> **3:** Fixes to maamarim and sichos to fail less often.", unsafe_allow_html=True)
 if submit_button:
