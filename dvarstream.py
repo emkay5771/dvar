@@ -769,6 +769,36 @@ def _booklet_body_lines(doc, page_number):
 def _booklet_has_body_above(doc, page_number, y):
     return any(line["bbox"][3] < y - 2 for line in _booklet_body_lines(doc, page_number))
 
+# Bidi/zero-width marks are invisible but sit inside the extracted text, and whether a
+# renderer emits them (and how it spaces runs) varies. Strip them and collapse runs of
+# whitespace before matching, so "יום ראשון" is found regardless.
+BOOKLET_FORMAT_CHARS = "".join(chr(c) for c in (
+    0x200B, 0x200C, 0x200D, 0x200E, 0x200F,
+    0x202A, 0x202B, 0x202C, 0x202D, 0x202E,
+    0x2066, 0x2067, 0x2068, 0x2069, 0xFEFF,
+))
+
+def _booklet_normalize(text):
+    for char in BOOKLET_FORMAT_CHARS:
+        if char in text:
+            text = text.replace(char, "")
+    return " ".join(text.split())
+
+def _booklet_line_text(line):
+    return _booklet_normalize("".join(span["text"] for span in line["spans"]))
+
+def _booklet_line_day(line):
+    text = _booklet_line_text(line)
+    return next((day for day in BOOKLET_DAYS if day in text), None)
+
+def _booklet_font_key(span):
+    # Embedded subset fonts are named "ABCDEF+Real-Name" and the prefix is per-subset, so
+    # it can differ between pages of the same booklet. Compare on the real name only.
+    font = span["font"]
+    if len(font) > 7 and font[6] == "+":
+        font = font[7:]
+    return (font, round(span["size"], 2))
+
 def _booklet_section(doc, toc, section_title):
     # Locate a top-level section plus its per-day sub-bookmarks, and work out the last
     # page the section can possibly occupy (one before the next top-level bookmark).
@@ -794,18 +824,31 @@ def _booklet_heading_signature(doc, section):
     # derive it per section instead of hardcoding. Taking the most common (font, size)
     # across all seven sub-bookmark pages means one wrong bookmark can't skew the result,
     # and a re-typeset booklet adapts instead of silently matching nothing.
+    # Matching is done on the whole *line's* text and the largest span on that line, never
+    # on the text of one span. How a line gets split into spans is a property of the PDF
+    # renderer and varies between PyMuPDF releases -- requiring one span to contain the
+    # entire day name worked locally but matched nothing in production, so no signature
+    # could be derived and every section silently fell back to the legacy offsets.
     counts = {}
     for _, day, page in section["days"]:
-        best = None
         if not 0 <= page - 1 < doc.page_count:
             continue
+        best = None
         for line in _booklet_body_lines(doc, page - 1):
+            if day not in _booklet_line_text(line):
+                continue
             for span in line["spans"]:
-                if day in span["text"] and (best is None or span["size"] > best[1]):
-                    best = (span["font"], round(span["size"], 2))
+                if best is None or span["size"] > best[1]:
+                    best = (_booklet_font_key(span)[0], round(span["size"], 2))
         if best:
             counts[best] = counts.get(best, 0) + 1
     if not counts:
+        # Log enough to tell *why* nothing matched without needing the booklet in hand:
+        # what the first bookmark page actually yielded. Cheap, and only on the failure path.
+        _, day, page = section["days"][0]
+        sample = [_booklet_line_text(line)[:60] for line in _booklet_body_lines(doc, page - 1)[:4]]
+        logger.warning("No day-heading font derived; looking for %r on page %d. First lines: %r",
+                       day, page, sample)
         return None
     return max(counts.items(), key=lambda item: item[1])[0]
 
@@ -821,13 +864,15 @@ def _booklet_scan_day_headings(doc, section, signature):
     seen = set()
     for page_number in range(max(section["lo"], 0), min(section["hi"], doc.page_count - 1) + 1):
         for line in _booklet_body_lines(doc, page_number):
-            text = "".join(span["text"] for span in line["spans"])
-            day = next((d for d in BOOKLET_DAYS if d in text), None)
+            day = _booklet_line_day(line)
             if day is None or day in seen:
                 continue
+            # A line is a heading when it names a day and is set in the heading face --
+            # tested per span but without requiring that span to hold the day name itself,
+            # since the split between spans is not stable across PyMuPDF versions.
             for span in line["spans"]:
-                if (span["font"] == signature[0] and abs(span["size"] - signature[1]) < 0.05
-                        and day in span["text"]):
+                font, size = _booklet_font_key(span)
+                if font == signature[0] and abs(size - signature[1]) < 0.05:
                     found.append((page_number, line["bbox"][1], day))
                     seen.add(day)
                     break
@@ -1242,7 +1287,9 @@ if not submit_button:
         st.markdown("**Past Changes (7-2-26)**: <br/> **[FIX]** Dvar Malchus downloads were silently failing in headless mode; fixed by explicitly allowing Chrome to save the file. <br/> **[FIX]** Chabad.org's daily study pages had started intermittently failing (an anti-bot check); fetches now retry automatically with a fresh session before giving up. <br/> **[NEW]** Added Sefaria as a 3rd fallback source for Chumash (with Rashi), Tanya, and Rambam if both Dvar Malchus and Chabad.org are unavailable, including correct handling of combined/double-parsha weeks. <br/> **[FIX]** Bilingual Rambam now shows Hebrew and English side by side instead of one after the other. <br/> **[FIX]** A single Chabad.org or Sefaria hiccup on one material no longer crashes the whole app.", unsafe_allow_html=True)
         st.markdown("**Past Changes (1-17-24)**: <br/> **[FIX]** Updated location of Dvar Malchus download button.", unsafe_allow_html=True)
         st.markdown("**Past Changes (7-17-23)**: <br/> **1:** Repeated compilations of materials from Dvar Malchus should be considerably faster. <br/> **2:** Shnayim mikra gets considerably faster on subsequent reruns. <br/> **3:** Fixes to maamarim and sichos to fail less often.", unsafe_allow_html=True)
-if submit_button:
-    if os.path.exists(f"output_dynamic{session}.pdf"):
-        with st.expander("NOTE: If you are reciving last weeks materials, please click here."):
-            newtime= st.button("Clear Cached Time", on_click=dateset.clear)
+# Not gated on submit_button: clicking the download button triggers a rerun in which
+# submit_button is False, which made this escape hatch vanish the moment someone
+# downloaded their PDF -- precisely when they'd notice the materials were last week's.
+if 'id' in st.session_state and os.path.exists(f"output_dynamic{st.session_state['id']}.pdf"):
+    with st.expander("NOTE: If you are reciving last weeks materials, please click here."):
+        newtime= st.button("Clear Cached Time", on_click=dateset.clear)
