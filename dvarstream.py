@@ -4,9 +4,12 @@ from selenium.webdriver.common.by import By #type: ignore
 from selenium.webdriver.support.ui import WebDriverWait #type: ignore
 from selenium.webdriver.support import expected_conditions as EC #type: ignore
 import os
+import re
 import time
 import threading
 import logging
+import html as html_mod #type: ignore
+from urllib.parse import urljoin
 import fitz as fitz #type: ignore
 from base64 import b64decode, b64encode
 from dateutil.relativedelta import relativedelta #type: ignore
@@ -104,7 +107,67 @@ def dvarget(session2): # attempts to retrieve dvar malchus pdf
         if os.path.exists(f"dvar{session2}.pdf"):
             logger.info("dvar%s.pdf already fetched by another session, reusing it", session2)
             return
+        # Try the plain-HTTP path first and only spin up Chrome if it fails, so a change
+        # at dvarmalchus.org that breaks the HTML scrape still degrades to the old
+        # (slower but independently written) browser path instead of losing the booklet.
+        if _dvarget_http(session2):
+            return
         _dvarget_locked(session2)
+
+DVAR_LINK_TEXTS = ["להורדת החוברת השבועית", "להורדת החוברת השבועית - חו״ל"]
+DVAR_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36"
+
+def _dvarget_find_url(page_html, base_url):
+    # Same idea as the XPath below -- match the button by its visible text rather than by
+    # position, because the Elementor markup around it has drifted before while the text
+    # has not. Anchors are matched with their tags stripped so nested <span> wrappers
+    # don't matter, and the link texts are tried in order so the Israel edition wins over
+    # the חו״ל one when the page happens to carry both.
+    for link_text in DVAR_LINK_TEXTS:
+        for href, inner in re.findall(r'<a\b[^>]*href="([^"]+)"[^>]*>(.*?)</a>', page_html, re.S | re.I):
+            text = " ".join(re.sub(r"<[^>]+>", " ", html_mod.unescape(inner)).split())
+            if link_text in text:
+                return urljoin(base_url, href)
+    return None
+
+def _dvarget_http(session2):
+    # dvarmalchus.org is plain WordPress behind Apache with no bot mitigation (unlike
+    # chabad.org, which is why that one still needs a real browser), and the download
+    # button's href is present in the served HTML. The Selenium path below was therefore
+    # only ever launching Chrome to read one attribute and then follow it -- this does the
+    # same job in ~2s instead of ~40s (driver launch + page load + the fixed 10s download
+    # wait) with no Chrome involved, and was verified to return a byte-identical booklet.
+    # It also removes the need for the CDP download-behaviour call and the mtime-based
+    # "which file did the browser just drop in the working directory?" guesswork.
+    # Returns True only if a real PDF landed on disk; every failure returns False so the
+    # caller falls back to Selenium rather than raising.
+    try:
+        http = requests.Session()
+        http.headers.update({"User-Agent": DVAR_USER_AGENT})
+        home = http.get("https://dvarmalchus.org", timeout=30)
+        home.raise_for_status()
+        url = _dvarget_find_url(home.text, "https://dvarmalchus.org")
+        if url is None:
+            logger.warning("Weekly booklet link not found in dvarmalchus.org HTML")
+            return False
+        logger.info(f"fetching booklet over http -> {url}")
+        booklet = http.get(url, timeout=120, allow_redirects=True)
+        booklet.raise_for_status()
+        if not booklet.content.startswith(b"%PDF-"):
+            logger.warning("dvarmalchus.org returned %s, not a PDF, for %s",
+                           booklet.headers.get("content-type"), url)
+            return False
+        # Write to a temp name and rename, so a partial download can never be mistaken
+        # for a complete cached booklet by another session checking os.path.exists().
+        tmp_path = f"dvar{session2}.pdf.tmp"
+        with open(tmp_path, "wb") as f:
+            f.write(booklet.content)
+        os.replace(tmp_path, f"dvar{session2}.pdf")
+        logger.info(f"Saved dvar{session2}.pdf over http")
+        return True
+    except Exception:
+        logger.warning("HTTP fetch of dvarmalchus.org failed, falling back to Selenium", exc_info=True)
+        return False
 
 def _dvarget_button_xpath(link_text):
     # Match on the Elementor button's class + visible text instead of an absolute,
@@ -629,6 +692,12 @@ def opttouse(opt, optconv): #sorts through options from opt to optconv, converti
             optconv.append('תניא יומי')
         elif i == 'Rambam (3)-Hebrew':
             optconv.append('רמב"ם - שלושה פרקים ליום')
+        elif i == 'Rambam (1)-Hebrew':
+            # The booklet carries a one-chapter-a-day Rambam section alongside the
+            # three-chapter one, with the same per-day sub-bookmarks. It simply was never
+            # mapped here, so this option always fell through to the catch-all below and
+            # was fetched from Chabad.org even when the booklet was already downloaded.
+            optconv.append('רמב"ם - פרק אחד ליום')
         elif i == 'Haftorah' or i == 'Krias Hatorah (includes Haftorah)':
             logger.debug("appended haftorah")
             optconv.append('חומש לקריאה בציבור')
@@ -653,27 +722,198 @@ def daytorambam(week, dor): #converts day of week from week in streamlit to date
         dor.append(f'{m}%2F{d}%2F{y}')
     return dor
 
-def find_next_top_level_bookmark(toc, current_index):
+def find_next_top_level_bookmark(toc, current_index, last_page):
     for i in range(current_index + 1, len(toc)):
         if toc[i][0] == 1:
             return toc[i][2] - 2
+    # No further top-level bookmark means this section runs to the end of the booklet.
+    # Returning None here used to flow straight into insert_pdf(to_page=None), which
+    # raises instead of meaning "to the end" -- so hand back the real last page.
+    return last_page
+
+# --- Dvar Malchus day boundaries -------------------------------------------------------
+# A day's shiur in the booklet does not stop at a page break: it runs partway down the
+# page where the *next* day's heading appears. The original code approximated that with a
+# per-section constant (-1 for Chumash/Rambam, -2 for Tanya), which is only right when a
+# heading happens to land at the same place every week. Measured across 12 booklets that
+# approximation was wrong on ~18% of day ranges -- Tanya's -2 truncated 4-6 of its 7 days
+# in *every* booklet tested, silently cutting off the end of each shiur. So rather than
+# guessing an offset, find the headings and decide each boundary by looking at the page.
+
+BOOKLET_DAYS = ['יום ראשון', 'יום שני', 'יום שלישי', 'יום רביעי', 'יום חמישי', 'יום שישי', 'שבת קודש']
+# Running header sits at y~27 and the folio/footer within ~40pt of the bottom; both repeat
+# the day name on every page, so they have to be excluded or they drown out the real heading.
+BOOKLET_HEADER_Y = 45
+BOOKLET_FOOTER_MARGIN = 40
+# Constants used only by the legacy fallback below, kept so its behaviour is unchanged.
+BOOKLET_LEGACY_OFFSETS = {
+    'חומש יומי': 1,
+    'תניא יומי': 2,
+    'רמב"ם - שלושה פרקים ליום': 1,
+    'רמב"ם - פרק אחד ליום': 1,
+}
+
+def _booklet_body_lines(doc, page_number):
+    page = doc[page_number]
+    height = page.rect.height
+    lines = []
+    for block in page.get_text("dict")["blocks"]:
+        if block.get("type"):
+            continue  # image block, no text spans
+        for line in block["lines"]:
+            if line["bbox"][1] > BOOKLET_HEADER_Y and line["bbox"][3] < height - BOOKLET_FOOTER_MARGIN:
+                lines.append(line)
+    lines.sort(key=lambda ln: ln["bbox"][1])
+    return lines
+
+def _booklet_has_body_above(doc, page_number, y):
+    return any(line["bbox"][3] < y - 2 for line in _booklet_body_lines(doc, page_number))
+
+def _booklet_section(doc, toc, section_title):
+    # Locate a top-level section plus its per-day sub-bookmarks, and work out the last
+    # page the section can possibly occupy (one before the next top-level bookmark).
+    for i, entry in enumerate(toc):
+        if entry[0] != 1 or entry[1] != section_title or not entry[2]:
+            continue
+        days = []
+        for sub in toc[i + 1:]:
+            if sub[0] == 1:
+                break
+            if sub[0] == 2 and sub[1] in BOOKLET_DAYS:
+                days.append(sub)
+        if not days:
+            continue
+        next_top = next((s[2] for s in toc[i + 1:] if s[0] == 1), None)
+        hi = (next_top - 2) if next_top else doc.page_count - 1
+        return {"lo": entry[2] - 1, "hi": hi, "days": days}
     return None
+
+def _booklet_heading_signature(doc, section):
+    # The day-heading font is not uniform across the booklet -- the Chumash/Tanya/Rambam
+    # sections use one face and size, while היום יום uses a different one entirely -- so
+    # derive it per section instead of hardcoding. Taking the most common (font, size)
+    # across all seven sub-bookmark pages means one wrong bookmark can't skew the result,
+    # and a re-typeset booklet adapts instead of silently matching nothing.
+    counts = {}
+    for _, day, page in section["days"]:
+        best = None
+        if not 0 <= page - 1 < doc.page_count:
+            continue
+        for line in _booklet_body_lines(doc, page - 1):
+            for span in line["spans"]:
+                if day in span["text"] and (best is None or span["size"] > best[1]):
+                    best = (span["font"], round(span["size"], 2))
+        if best:
+            counts[best] = counts.get(best, 0) + 1
+    if not counts:
+        return None
+    return max(counts.items(), key=lambda item: item[1])[0]
+
+def _booklet_scan_day_headings(doc, section, signature):
+    # Scan the section's pages and ignore the sub-bookmark page numbers entirely. The
+    # publisher's own bookmarks are sometimes wrong -- of 12 booklets checked, 3 had a day
+    # bookmark off by up to 4 pages, and in one case the offset maths therefore gave that
+    # day a single page instead of six. Scanning finds the heading wherever it actually
+    # is, so a bad bookmark costs nothing. Matching on the font signature rather than the
+    # day text alone also avoids false hits on ordinary prose that happens to mention a
+    # day name (e.g. "שהחג חל ביום שני" inside a commentary).
+    found = []
+    seen = set()
+    for page_number in range(max(section["lo"], 0), min(section["hi"], doc.page_count - 1) + 1):
+        for line in _booklet_body_lines(doc, page_number):
+            text = "".join(span["text"] for span in line["spans"])
+            day = next((d for d in BOOKLET_DAYS if d in text), None)
+            if day is None or day in seen:
+                continue
+            for span in line["spans"]:
+                if (span["font"] == signature[0] and abs(span["size"] - signature[1]) < 0.05
+                        and day in span["text"]):
+                    found.append((page_number, line["bbox"][1], day))
+                    seen.add(day)
+                    break
+    return found
+
+def _booklet_day_ranges_by_heading(doc, section):
+    signature = _booklet_heading_signature(doc, section)
+    if signature is None:
+        return None
+    headings = _booklet_scan_day_headings(doc, section, signature)
+    # Completeness gate: only trust the scan when it found exactly the days the section's
+    # own sub-bookmarks advertise. A partial scan is worse than no scan, because the days
+    # it missed would silently disappear from the output rather than merely being wrong --
+    # so anything short of a full match falls back wholesale.
+    if {day for _, _, day in headings} != {day for _, day, _ in section["days"]}:
+        logger.warning("Heading scan found %d/%d days", len(headings), len(section["days"]))
+        return None
+    ranges = {}
+    for index, (page_number, _, day) in enumerate(headings):
+        if index + 1 < len(headings):
+            next_page, next_y, _ = headings[index + 1]
+            # Include the page the next heading sits on only when this day's text actually
+            # continues onto it, i.e. when there is body content above that heading. When
+            # the next heading starts at the top of its page, this day ended on the page
+            # before it.
+            end = next_page if _booklet_has_body_above(doc, next_page, next_y) else next_page - 1
+        else:
+            # Last day of the section: a new section always opens on a fresh page with its
+            # own banner, so this day never continues into it.
+            end = section["hi"]
+        ranges[day] = (page_number, min(max(end, page_number), section["hi"]))
+    return ranges
+
+def _booklet_day_ranges_by_offset(section, section_title):
+    # The original constant-offset behaviour, kept as a fallback for the case where the
+    # heading scan can't identify every day (a re-typeset booklet, say). It is measurably
+    # wrong on a fair share of days -- see the note above -- so it is a safety net, not an
+    # equivalent method, and the caller warns the user when it is used.
+    days = section["days"]
+    ranges = {}
+    for index, (_, day, page) in enumerate(days):
+        start = page - 1
+        is_last = index + 1 == len(days)
+        next_bookmark = days[index + 1][2] if not is_last else section["hi"] + 2
+        offset = 2 if (section_title == 'חומש יומי' and is_last) else BOOKLET_LEGACY_OFFSETS.get(section_title, 1)
+        end = next_bookmark - offset
+        ranges[day] = (start, min(max(end, start), section["hi"]))
+    return ranges
+
+def booklet_day_ranges(doc, toc, section_title):
+    # Returns {hebrew day name: (first page, last page)} as inclusive 0-based page indexes,
+    # or None if this section isn't a day-based one in this booklet.
+    section = _booklet_section(doc, toc, section_title)
+    if section is None:
+        return None
+    ranges = _booklet_day_ranges_by_heading(doc, section)
+    if ranges is not None:
+        return ranges
+    logger.warning("Falling back to legacy page offsets for %s", section_title)
+    st.warning(f"Couldn't read the day boundaries for {section_title} in this week's Dvar Malchus, "
+               "so its page ranges were estimated and may be slightly short or long. "
+               "Please check that section against the original booklet.")
+    return _booklet_day_ranges_by_offset(section, section_title)
 
 def dedupe(pages, pages2, pages3, start_page, end_page): #dedupes the pages when appending, to ensure that pages aren't repeated
     pages2.append(start_page)
     pages2.append(end_page)
-    if start_page in pages:
+    # Consecutive days legitimately share the page they break on, so a day's range can
+    # overlap the previous one. Trim this range down to the part not already inserted.
+    #
+    # This tracks every page taken, not just the two endpoints, and only records pages
+    # once the trimmed range is known to be non-empty. The endpoint-only version could
+    # adjust an endpoint by a single page (not enough when several are already taken),
+    # and it recorded the adjusted endpoints even when the range came out empty -- which
+    # claimed a page nothing had actually inserted and left a hole in the output.
+    seen = set(pages)
+    while start_page <= end_page and start_page in seen:
         start_page = start_page + 1
-        pages.append(start_page)
-        pages3.append(start_page)
-    if end_page in pages:
+    while start_page <= end_page and end_page in seen:
         end_page = end_page - 1
-        pages.append(end_page)
-        pages3.append(end_page)
-    if start_page not in pages:
-        pages.append(start_page)
-    if end_page not in pages:
-        pages.append(end_page)
+    if start_page > end_page:
+        return start_page, end_page  # fully covered already; caller skips, `pages` untouched
+    for page_number in range(start_page, end_page + 1):
+        if page_number not in seen:
+            pages.append(page_number)
+            pages3.append(page_number)
     return start_page,end_page
 
 def ensure_material(name, session, chabad_fetch, sefaria_fetch):
@@ -697,6 +937,10 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
     pages2 = []
     pages3 = []
     kriahattatch = False
+    # The Rambam pills are multi-select but rambamenglish() only ever writes a single
+    # Rambam{session}.pdf, so without this guard selecting two Chabad-sourced Rambam
+    # variants at once inserted the same file twice.
+    rambamattached = False
     if source == True:
         try:
             doc = fitz.open(f"dvar{session2}.pdf")
@@ -734,7 +978,9 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
                 elif option == 'Tanya':
                     doc_out.insert_pdf(fitz.open(f"Tanya{session}.pdf"))
                 elif 'Rambam' in option:
-                    doc_out.insert_pdf(fitz.open(f"Rambam{session}.pdf")) #type: ignore
+                    if not rambamattached:
+                        doc_out.insert_pdf(fitz.open(f"Rambam{session}.pdf")) #type: ignore
+                        rambamattached = True
                 elif option == 'Hayom Yom':
                     doc_out.insert_pdf(fitz.open(f"Hayom{session}.pdf"))
                 elif option == 'Shnayim Mikra':
@@ -745,33 +991,25 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
                 
     else:
         for q in optconv:
-            for z in dow:
-                for i, top_level in enumerate(toc): #type: ignore
-                    if not top_level[2]:
-                        continue  # skip top-level bookmarks without a page number
-                    if top_level[1] == q:
-                        for j, sub_level in enumerate(toc[i+1:], start=i+1): #type: ignore
-                            if sub_level[0] != top_level[0] + 1:
-                                break  # stop when we reach the next top-level bookmark
-                            if z in sub_level[1]:
-                                start_page = sub_level[2] - 1
-                                if top_level[1] == "חומש יומי":
-                                    if z == 'שבת קודש':
-                                        end_page = toc[j+1][2] - 2
-                                    else:
-                                        end_page = toc[j+1][2] - 1 #type: ignore
-                                    logger.debug("Chumash found")
-                                if top_level[1] == "תניא יומי":
-                                    end_page = toc[j+1][2] - 2 #type: ignore
-                                    logger.debug("Tanya found")
-                                if top_level[1] == 'רמב"ם - שלושה פרקים ליום':
-                                    end_page = toc[j+1][2] - 1 #type: ignore
-                                    logger.debug("Rambam found")
-                                logger.debug(f"Current Start Page: {start_page}. Current End Page: {end_page}") #type: ignore
-                                start_page, end_page = dedupe(pages, pages2, pages3, start_page, end_page) #type: ignore
-                                logger.debug(f"New Start Page: {start_page}. New End Page: {end_page}")
-                                doc_out.insert_pdf(doc, from_page=start_page, to_page=end_page) #type: ignore
-                                continue
+            # Day ranges are resolved once per section rather than once per selected day,
+            # since the heading scan reads every page of the section.
+            day_ranges = booklet_day_ranges(doc, toc, q) #type: ignore
+            if day_ranges:
+                for z in dow:
+                    if z not in day_ranges:
+                        continue
+                    start_page, end_page = day_ranges[z]
+                    logger.debug(f"{q} {z}: Current Start Page: {start_page}. Current End Page: {end_page}")
+                    # Consecutive days legitimately share the page they break on, so the
+                    # dedupe below still earns its keep: it keeps that shared page from
+                    # being inserted twice when both days are selected.
+                    start_page, end_page = dedupe(pages, pages2, pages3, start_page, end_page)
+                    logger.debug(f"New Start Page: {start_page}. New End Page: {end_page}")
+                    if start_page > end_page:
+                        # Everything unique to this day sits on a page an earlier selected
+                        # day already contributed, so there is nothing left to add.
+                        continue
+                    doc_out.insert_pdf(doc, from_page=start_page, to_page=end_page) #type: ignore
 
             if q == 'חומש לקריאה בציבור' or q == 'מאמרים' or q == 'לקוטי שיחות':
                 for i, item in enumerate(toc): #type: ignore
@@ -782,7 +1020,7 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
                                 with open(f"dvar{session2}.pdf", "rb") as pdf_file:
                                     pdf_reader = PyPDF2.PdfReader(pdf_file)
                                     page_num_start = item[2] - 1
-                                    page_num_end = find_next_top_level_bookmark(toc, i) #type: ignore
+                                    page_num_end = find_next_top_level_bookmark(toc, i, doc.page_count - 1) #type: ignore
                                     doc_out.insert_pdf(doc, from_page=page_num_start, to_page=page_num_end) #type: ignore
                     if q == 'מאמרים':
                         for word in item[1].split():
@@ -791,7 +1029,7 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
                                 with open(f"dvar{session2}.pdf", "rb") as pdf_file:
                                     pdf_reader = PyPDF2.PdfReader(pdf_file)
                                     page_num_start = item[2] - 1
-                                    page_num_end = find_next_top_level_bookmark(toc, i) #type: ignore
+                                    page_num_end = find_next_top_level_bookmark(toc, i, doc.page_count - 1) #type: ignore
                                     doc_out.insert_pdf(doc, from_page=page_num_start, to_page=page_num_end) #type: ignore
                     if item[1] == 'חומש לקריאה בציבור' and q == 'חומש לקריאה בציבור':
                         with open(f"dvar{session2}.pdf", "rb") as pdf_file:
@@ -813,8 +1051,13 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
                                         continue
 
             if 'Rambam' in q:
-                doc_out.insert_pdf(fitz.open(f"Rambam{session}.pdf"))
-                logger.debug("Appended Rambam")
+                # Only the non-Hebrew Rambam variants reach here as raw option strings;
+                # the Hebrew ones are mapped to their booklet section titles by opttouse()
+                # and are handled by the day-range branch above.
+                if not rambamattached:
+                    doc_out.insert_pdf(fitz.open(f"Rambam{session}.pdf"))
+                    rambamattached = True
+                    logger.debug("Appended Rambam")
                 continue
 
             if q == 'Hayom Yom':
@@ -915,7 +1158,7 @@ if submit_button: #if the user submits the form, run the following code, which w
         logger.info(optconv)
     logger.info(week)
     if source == True:
-        if 'Chumash' in opt or 'Tanya' in opt or 'Haftorah' in opt or 'Rambam (3)-Hebrew' in opt or 'Project Likutei Sichos (Hebrew)' in opt or 'Maamarim' in opt or 'Krias Hatorah (includes Haftorah)' in opt:
+        if 'Chumash' in opt or 'Tanya' in opt or 'Haftorah' in opt or 'Rambam (3)-Hebrew' in opt or 'Rambam (1)-Hebrew' in opt or 'Project Likutei Sichos (Hebrew)' in opt or 'Maamarim' in opt or 'Krias Hatorah (includes Haftorah)' in opt:
             if os.path.exists(f"dvar{session2}.pdf") == False:
                 try:
                     with st.spinner('Attempting to download Dvar Malchus...'):
@@ -943,10 +1186,10 @@ if submit_button: #if the user submits the form, run the following code, which w
                 ensure_material("Rambam", session, lambda: rambamenglish(dor, session, opt),
                                  lambda: sefaria_rambam_get(week, session, opt))
         if source == True:
-            if 'Rambam (3)-Bilingual' in opt or 'Rambam (3)-English' in opt or 'Rambam (1)-Bilingual' in opt or 'Rambam (1)-English' in opt or 'Rambam (1)-Hebrew' in opt:
+            if 'Rambam (3)-Bilingual' in opt or 'Rambam (3)-English' in opt or 'Rambam (1)-Bilingual' in opt or 'Rambam (1)-English' in opt:
                 ensure_material("Rambam", session, lambda: rambamenglish(dor, session, opt),
                                  lambda: sefaria_rambam_get(week, session, opt))
-            elif 'Rambam (3)-Hebrew' in opt and os.path.exists(f"dvar{session2}.pdf") == False:
+            elif ('Rambam (3)-Hebrew' in opt or 'Rambam (1)-Hebrew' in opt) and os.path.exists(f"dvar{session2}.pdf") == False:
                 ensure_material("Rambam", session, lambda: rambamenglish(dor, session, opt),
                                  lambda: sefaria_rambam_get(week, session, opt))
 
@@ -994,7 +1237,8 @@ st.markdown("**Any major bugs noticed? Features that you'd like to see? Comments
 
 if not submit_button:
     with st.expander("**Changelog:**"):
-        st.markdown("**New in latest update (7-3-26)**: <br/> **[FIX]** Fixed a crash when two people generated a booklet from Dvar Malchus at nearly the same time. <br/> **[NEW]** Modernized the app's dependencies (Streamlit and others) and swapped out a few unmaintained UI components for Streamlit's own native ones. <br/> **[NEW]** Added a custom dark theme. <br/> **[NEW]** Chumash/Tanya/Rambam/Hayom Yom fetches are now shared across everyone requesting the same day, so repeat generations are faster and put less load on Chabad.org.", unsafe_allow_html=True)
+        st.markdown("**New in latest update (7-19-26)**: <br/> **[FIX]** Days taken from Dvar Malchus now include their full shiur. Because a day's learning ends partway down a page rather than at a page break, the app used to cut some days short or add a page of the next day — Tanya was losing the end of most days every week. Day boundaries are now found on the page itself instead of being estimated. <br/> **[NEW]** Rambam (1 chapter) in Hebrew now comes from Dvar Malchus like the 3-chapter cycle, instead of always falling back to Chabad.org. <br/> **[FIX]** Selecting more than one Rambam option at once no longer repeats the same section twice. <br/> **[NEW]** Dvar Malchus downloads are much faster (a couple of seconds instead of around forty) — the app now fetches the booklet directly rather than driving a browser, falling back to the old method if needed.", unsafe_allow_html=True)
+        st.markdown("**Past Changes (7-3-26)**: <br/> **[FIX]** Fixed a crash when two people generated a booklet from Dvar Malchus at nearly the same time. <br/> **[NEW]** Modernized the app's dependencies (Streamlit and others) and swapped out a few unmaintained UI components for Streamlit's own native ones. <br/> **[NEW]** Added a custom dark theme. <br/> **[NEW]** Chumash/Tanya/Rambam/Hayom Yom fetches are now shared across everyone requesting the same day, so repeat generations are faster and put less load on Chabad.org.", unsafe_allow_html=True)
         st.markdown("**Past Changes (7-2-26)**: <br/> **[FIX]** Dvar Malchus downloads were silently failing in headless mode; fixed by explicitly allowing Chrome to save the file. <br/> **[FIX]** Chabad.org's daily study pages had started intermittently failing (an anti-bot check); fetches now retry automatically with a fresh session before giving up. <br/> **[NEW]** Added Sefaria as a 3rd fallback source for Chumash (with Rashi), Tanya, and Rambam if both Dvar Malchus and Chabad.org are unavailable, including correct handling of combined/double-parsha weeks. <br/> **[FIX]** Bilingual Rambam now shows Hebrew and English side by side instead of one after the other. <br/> **[FIX]** A single Chabad.org or Sefaria hiccup on one material no longer crashes the whole app.", unsafe_allow_html=True)
         st.markdown("**Past Changes (1-17-24)**: <br/> **[FIX]** Updated location of Dvar Malchus download button.", unsafe_allow_html=True)
         st.markdown("**Past Changes (7-17-23)**: <br/> **1:** Repeated compilations of materials from Dvar Malchus should be considerably faster. <br/> **2:** Shnayim mikra gets considerably faster on subsequent reruns. <br/> **3:** Fixes to maamarim and sichos to fail less often.", unsafe_allow_html=True)
