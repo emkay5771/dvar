@@ -1115,7 +1115,7 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
                 
                 continue
                        
-    doc_out.save(os.path.join(output_dir, f"output_dynamic{session}.pdf")) if doc_out.page_count > 0 else (logger.error("No pages were added to the output PDF (opt=%r, source=%r); refusing to save an empty document.", opt, source), st.error("No content was generated for your selections — nothing could be added to the PDF. Please check your selections and try again."), st.stop())
+    _ = doc_out.save(os.path.join(output_dir, f"output_dynamic{session}.pdf")) if doc_out.page_count > 0 else (logger.error("No pages were added to the output PDF (opt=%r, source=%r); refusing to save an empty document.", opt, source), st.error("No content was generated for your selections — nothing could be added to the PDF. Please check your selections and try again."), st.stop())  # NB: assignment, not a bare expression -- keeps Streamlit magic from rendering the None result as "None"
     doc_out.close()
 
 
