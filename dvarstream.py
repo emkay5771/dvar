@@ -24,7 +24,7 @@ import glob
 from pyluach import parshios, dates
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("dvarstream")
+logger = logging.getLogger("dvarstream"); append_material = lambda doc_out, path, label: doc_out.insert_pdf(fitz.open(path)) if os.path.exists(path) else logger.warning("Skipping %s: %s was not created (all fetch tiers failed).", label, path)
 
 st.set_page_config(page_title="Dvar Creator (BETA)", page_icon="📚", layout="wide", initial_sidebar_state="collapsed")
 
@@ -1019,17 +1019,17 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
             logger.info(opt)
             for option in opt:
                 if option == 'Chumash':
-                    doc_out.insert_pdf(fitz.open(f"Chumash{session}.pdf"))
+                    append_material(doc_out, f"Chumash{session}.pdf", "Chumash")
                 elif option == 'Tanya':
-                    doc_out.insert_pdf(fitz.open(f"Tanya{session}.pdf"))
+                    append_material(doc_out, f"Tanya{session}.pdf", "Tanya")
                 elif 'Rambam' in option:
                     if not rambamattached:
-                        doc_out.insert_pdf(fitz.open(f"Rambam{session}.pdf")) #type: ignore
+                        append_material(doc_out, f"Rambam{session}.pdf", "Rambam") #type: ignore
                         rambamattached = True
                 elif option == 'Hayom Yom':
-                    doc_out.insert_pdf(fitz.open(f"Hayom{session}.pdf"))
+                    append_material(doc_out, f"Hayom{session}.pdf", "Hayom Yom")
                 elif option == 'Shnayim Mikra':
-                    doc_out.insert_pdf(fitz.open(f"Shnayim{session2}.pdf"))
+                    append_material(doc_out, f"Shnayim{session2}.pdf", "Shnayim Mikra")
                 if all(option not in chabadoptions for option in opt) and any(option in opt for option in ['Project Likutei Sichos', 'Maamarim', 'Haftorah', 'Krias Hatorah (includes Haftorah)']):
                     st.error("Project Likutei Sichos, Kriah, the Haftorah, and Maamarim are not available from Chabad.org. Please try again.")
                     st.stop()
@@ -1100,22 +1100,22 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
                 # the Hebrew ones are mapped to their booklet section titles by opttouse()
                 # and are handled by the day-range branch above.
                 if not rambamattached:
-                    doc_out.insert_pdf(fitz.open(f"Rambam{session}.pdf"))
+                    append_material(doc_out, f"Rambam{session}.pdf", "Rambam")
                     rambamattached = True
-                    logger.debug("Appended Rambam")
+                    
                 continue
 
             if q == 'Hayom Yom':
-                doc_out.insert_pdf(fitz.open(f"Hayom{session}.pdf"))
-                logger.debug("Appended Hayom Yom")
+                append_material(doc_out, f"Hayom{session}.pdf", "Hayom Yom")
+                
                 continue
 
             if q == 'Shnayim Mikra':
-                doc_out.insert_pdf(fitz.open(f"Shnayim{session2}.pdf"))
-                logger.debug("Appended Shnayim Mikra")
+                append_material(doc_out, f"Shnayim{session2}.pdf", "Shnayim Mikra")
+                
                 continue
                        
-    doc_out.save(os.path.join(output_dir, f"output_dynamic{session}.pdf"))
+    doc_out.save(os.path.join(output_dir, f"output_dynamic{session}.pdf")) if doc_out.page_count > 0 else (logger.error("No pages were added to the output PDF (opt=%r, source=%r); refusing to save an empty document.", opt, source), st.error("No content was generated for your selections — nothing could be added to the PDF. Please check your selections and try again."), st.stop())
     doc_out.close()
 
 
@@ -1184,7 +1184,7 @@ if submit_button: #if the user submits the form, run the following code, which w
     optconv = []
     dor = []
     opt = sorted(opt, key=optorder.index)
-    # st.pills() already returns [] (not None) when no day is selected, but normalize
+    if not opt: st.error("Please select at least one material to print before generating the PDF."); st.stop()  # st.pills() returns [] when nothing selected
     # defensively so the "week == []" checks below are guaranteed to fire correctly.
     week = week or []
     week = sorted(week, key=weekorder.index)
