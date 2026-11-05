@@ -154,7 +154,7 @@ def _rashi(verse, language):
                     comments.append((f'<b class="dh">{title}</b> ' if title else "") + body)
     return comments
 
-def chumash_section(day, language="he"):
+def chumash_section(day, language="he", columns=2):
     """language: "he" or "both". Each pasuk is followed by its own Rashi, as on Chabad.org.
     Hebrew runs in two columns, which takes about a quarter fewer pages than one wide column:
     every pasuk and every Rashi ends in a part-empty line, and those cost less in a narrower
@@ -206,7 +206,7 @@ def chumash_section(day, language="he"):
     return (
         f'<section class="day chumash lang-{language}">'
         + _header("Chumash with Rashi", "חומש עם פירוש רש״י", day, portion_en, portion_he)
-        + f'<div class="chumash-{language}">' + "".join(blocks) + "</div>"
+        + f'<div class="chumash-{language}{" one-col" if columns == 1 else ""}">' + "".join(blocks) + "</div>"
         + "</section>"
     )
 
@@ -456,8 +456,102 @@ def hayomyom_section(day):
         if not paragraphs:
             raise LookupError(f"Hayom Yom entry {entry['article-id']} came back empty")
         title = html_mod.escape(re.sub(r"^Hayom Yom:\s*", "", entry.get("native-title") or ""))
-        body.append(f'<div class="entry"><div class="entry-title">{title} · 5703</div>{"".join(paragraphs)}{_notes_html(notes)}</div>')
+        body.append(f'<div class="entry"><div class="entry-title">{title}</div>{"".join(paragraphs)}{_notes_html(notes)}</div>')
     return '<section class="day hayomyom">' + _header("Hayom Yom", "היום יום", day) + "".join(body) + "</section>"
+
+
+# --- Hayom Yom in Hebrew, from the Dvar Malchus booklet -----------------------------------
+# Chabad.org's Torah Texts API only has the English Hayom Yom; its Hebrew is only on the
+# daily study pages, which block the app. The weekly Dvar Malchus booklet prints the Hebrew
+# (with nikud) for each day, and dvarstream.booklet_hayomyom() reads it out as text, so it
+# can be laid out here like everything else, and paired with Chabad.org's English by date.
+
+_HEBREW_MONTH_KEYS = [("מנחם אב", "Menachem Av"), ("אדר שני", "Adar II"), ("אדר ב", "Adar II"), ("אדר ראשון", "Adar I"),
+                      ("אדר א", "Adar I"), ("אדר", "Adar I"), ("מרחשון", "Cheshvan"), ("חשוון", "Cheshvan"), ("חשון", "Cheshvan"),
+                      ("תשרי", "Tishrei"), ("כסלו", "Kislev"), ("טבת", "Tevet"), ("שבט", "Shevat"), ("ניסן", "Nissan"),
+                      ("אייר", "Iyar"), ("סיוון", "Sivan"), ("סיון", "Sivan"), ("תמוז", "Tamuz"), ("אלול", "Elul"), ("אב", "Menachem Av")]
+_MONTH_NUMBERS = {"Nissan": 1, "Iyar": 2, "Sivan": 3, "Tamuz": 4, "Menachem Av": 5, "Elul": 6, "Tishrei": 7,
+                  "Cheshvan": 8, "Kislev": 9, "Tevet": 10, "Shevat": 11, "Adar I": 12, "Adar II": 13}
+
+def parse_hebrew_date(text):
+    """("Cheshvan", 22) for "כב חשון" (also "כב חשון, שבת ..." and ט"ו-style numerals)."""
+    for hebrew, key in _HEBREW_MONTH_KEYS:
+        match = re.search(r"([א-ת'\"״׳]{1,4})\s+" + hebrew + r"(?![א-ת])", text)
+        if match:
+            day = hebrew_number_value(re.sub(r"[^א-ת]", "", match.group(1)))
+            if 1 <= day <= 30:
+                return key, day
+    return None
+
+def _gregorian_near(month_key, day_number, today):
+    """The Gregorian date of this Hebrew day and month nearest to today."""
+    hebrew_today = dates.GregorianDate(today.year, today.month, today.day).to_heb()
+    best = None
+    for year in (hebrew_today.year - 1, hebrew_today.year, hebrew_today.year + 1):
+        month = _MONTH_NUMBERS[month_key]
+        if month == 13 and not hebrewcal.Year(year).leap:
+            month = 12
+        try:
+            candidate = dates.HebrewDate(year, month, min(day_number, 29 if month in (8, 9) else 30)).to_pydate()
+        except ValueError:
+            continue
+        if best is None or abs((candidate - today).days) < abs((best - today).days):
+            best = candidate
+    return best
+
+def booklet_week_dates(days, today):
+    """{"יום ראשון": date, ...} for the booklet's week. Each day's entry date gives a guess at
+    that week's Sunday; take the most common, since a day can repeat the previous entry (30
+    Cheshvan shows 29) or show a Yom Tov entry."""
+    order = ["יום ראשון", "יום שני", "יום שלישי", "יום רביעי", "יום חמישי", "יום שישי", "שבת קודש"]
+    votes = {}
+    for day in days:
+        for entry in day["entries"][:1]:
+            parsed = parse_hebrew_date(entry["date"])
+            if parsed and day["weekday"] in order:
+                gregorian = _gregorian_near(parsed[0], parsed[1], today)
+                if gregorian:
+                    sunday = gregorian - timedelta(days=order.index(day["weekday"]))
+                    votes[sunday] = votes.get(sunday, 0) + 1
+    if not votes:
+        raise LookupError("Couldn't date the booklet's Hayom Yom")
+    sunday = max(votes, key=votes.get)
+    return {name: sunday + timedelta(days=n) for n, name in enumerate(order)}
+
+def _hebrew_entry_html(entry):
+    parts = []
+    for kind, text in entry["paragraphs"]:
+        if kind == "label":
+            parts.append(f'<div class="tlabel">{html_mod.escape(text)}</div>')
+        else:
+            parts.append(f"<p>{html_mod.escape(text)}</p>")
+    return (f'<div class="entry-title he">{html_mod.escape(entry["date"])}</div>' + "".join(parts))
+
+def hayomyom_booklet_section(day_date, entries, language="he"):
+    """One day of Hayom Yom from the booklet's entries. language: "he" or "both"; for
+    "both" each entry is paired with Chabad.org's English of the same Hebrew date."""
+    if not entries:
+        raise LookupError(f"No Hayom Yom entry in the booklet for {day_date}")
+    rows = []
+    for entry in entries:
+        hebrew = f'<div class="hy-he he">{_hebrew_entry_html(entry)}</div>'
+        if language != "both":
+            rows.append(f'<div class="entry">{hebrew}</div>')
+            continue
+        parsed = parse_hebrew_date(entry["date"])
+        node = _hayomyom_index().get(parsed[0], {}).get(parsed[1]) if parsed else None
+        if node is None:
+            raise LookupError(f"No English Hayom Yom for {entry['date']!r}")
+        notes, paragraphs = [], []
+        for verse in api("book-content", node["article-id"]).get("verses") or []:
+            text = _clean((verse.get("native") or {}).get("text"), notes)
+            if text:
+                paragraphs.append(f"<p>{text}</p>")
+        title = html_mod.escape(re.sub(r"^Hayom Yom:\s*", "", node.get("native-title") or ""))
+        english = f'<div class="hy-en"><div class="entry-title">{title}</div>{"".join(paragraphs)}{_notes_html(notes)}</div>'
+        rows.append(f'<div class="entry hyrow">{english}{hebrew}</div>')
+    return (f'<section class="day hayomyom lang-{language}">' + _header("Hayom Yom", "היום יום", day_date)
+            + "".join(rows) + "</section>")
 
 
 # --- page ------------------------------------------------------------------------------------
@@ -490,6 +584,10 @@ sup.fn { font-size: 7pt; color: var(--rule); font-weight: 600; }
 .chapter-mark { text-align: center; font-size: 10.5pt; font-weight: 700; color: var(--muted); margin: 2pt 0 6pt; letter-spacing: 0.04em; break-after: avoid; }
 .chapter-mark::before, .chapter-mark::after { content: "—"; color: var(--rule); margin: 0 6pt; }
 .chumash-he { direction: rtl; columns: 2; column-gap: 20pt; column-rule: 0.5pt solid var(--soft); }
+/* One-column Chumash, for those who prefer full-width lines and larger text. */
+.chumash-he.one-col { columns: 1; }
+.chumash-he.one-col .ptext { font-size: 17pt; line-height: 1.8; }
+.chumash-he.one-col .prashi { font-size: 11pt; padding-right: 10pt; }
 .pasuk { margin: 0 0 7pt; }
 .ptext { font-size: 15pt; line-height: 1.75; margin: 0; text-align: justify; break-inside: avoid; break-after: avoid; }
 .ptext .vnum { font-size: 8.5pt; font-weight: 700; color: var(--rule); margin-left: 4pt; vertical-align: 3pt; }
@@ -532,13 +630,20 @@ sup.fn { font-size: 7pt; color: var(--rule); font-weight: 600; }
 
 /* Short daily lessons (Tanya, Hayom Yom) run on instead of starting a page each; after the
    first day the material's name isn't repeated, only the date. */
-.compact .day { break-before: auto; break-inside: avoid; margin-bottom: 16pt; }
+.compact .day { break-before: auto; margin-bottom: 16pt; }
+.day-head, .entry-title { break-after: avoid; }
 .compact .day ~ .day .day-head .row:first-child { display: none; }
 .compact .day ~ .day .day-head .sub { color: var(--ink); font-size: 12pt; font-weight: 600; }
 .compact .day ~ .day .day-head .sub .he { font-size: 13pt; }
 .compact .day ~ .day .day-head { border-bottom-width: 0.8pt; margin-bottom: 8pt; }
 
 /* Hayom Yom */
+.hy-he p { font-size: 13.5pt; line-height: 1.75; margin: 0 0 6pt; text-align: justify; }
+.hy-he .tlabel { font-size: 9.5pt; font-weight: 700; color: var(--rule); margin: 4pt 0 2pt; letter-spacing: 0.05em; }
+.hy-he .entry-title { font-style: normal; font-size: 10.5pt; }
+.hyrow { display: grid; grid-template-columns: 1fr 1fr; gap: 16pt; }
+.hyrow .hy-en p { font-size: 11.5pt; line-height: 1.45; }
+.hyrow .hy-he p { font-size: 13pt; }
 .hayomyom .entry { font-size: 13pt; line-height: 1.55; }
 .hayomyom .entry + .entry { margin-top: 10pt; padding-top: 8pt; border-top: 0.5pt dashed var(--soft); }
 .hayomyom .entry-title { font-size: 10.5pt; color: var(--muted); font-style: italic; margin-bottom: 3pt; }
