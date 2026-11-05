@@ -13,6 +13,8 @@ caller can fall back to another source.
 """
 import html as html_mod
 import re
+import time
+import unicodedata
 from datetime import timedelta
 
 import requests
@@ -21,6 +23,7 @@ from pyluach import dates, hebrewcal, parshios
 
 API = "https://www.chabad.org/api/v2/chabadorg/torahtexts"
 RSS = "https://www.chabad.org/tools/rss/dailystudy_rss.xml"
+SEFARIA = "https://www.sefaria.org/api"  # only for where each day's Tanya starts
 HEADERS = {"User-Agent": "DvarCreator/1.0 (+https://dvarmaker.streamlit.app)"}
 
 CHUMASH_BOOK = 6504074   # Chumash: Daily Studies in Chitas (Hebrew, English, Rashi and more)
@@ -47,17 +50,29 @@ _LETTER_VALUES = {letter: value for value, letter in _NUMERALS}
 
 # --- fetching --------------------------------------------------------------------------
 
+def _get(url, **kwargs):
+    # Chabad.org answers 429 Too Many Requests when asked too fast (seen 11-5-26 at about 25
+    # requests a second). A long date range asks for a lot, so wait a little and try again
+    # rather than send the rest of the range to the fallback.
+    for attempt in range(3):
+        response = requests.get(url, headers=HEADERS, timeout=20, **kwargs)
+        if response.status_code != 429 or attempt == 2:
+            response.raise_for_status()
+            return response
+        try:
+            wait = float(response.headers.get("Retry-After", ""))
+        except ValueError:
+            wait = 2.0 * (attempt + 1)
+        time.sleep(min(max(wait, 1.0), 10.0))
+
 @st.cache_data(ttl="7d", show_spinner=False)
 def api(endpoint, article_id):
-    response = requests.get(f"{API}/{endpoint}/{article_id}", headers=HEADERS, timeout=20)
-    response.raise_for_status()
-    return response.json()
+    return _get(f"{API}/{endpoint}/{article_id}").json()
 
 @st.cache_data(ttl="7d", show_spinner=False)
 def schedule(day):
     """{"Daily Chumash with Rashi": "Parshat Toldot, 1st Portion (...)", ...} for one date."""
-    response = requests.get(RSS, params={"tdate": f"{day.month}/{day.day}/{day.year}"}, headers=HEADERS, timeout=20)
-    response.raise_for_status()
+    response = _get(RSS, params={"tdate": f"{day.month}/{day.day}/{day.year}"})
     items = {}
     for item in re.findall(r"<item>(.*?)</item>", response.text, re.S):
         title = re.search(r"<title>(.*?)</title>", item, re.S)
@@ -235,49 +250,169 @@ def _tanya_part(section, part):
             return node, next(p for p in parents if p.get("native-title") == section)
     raise LookupError(f"Tanya {section}, {part} not found")
 
-def _tanya_lessons(article_id):
-    """The day-by-day lessons of one chapter. Lessons in Tanya numbers each lesson's
-    segments in its own block of 500 (503, 504, ... then 1015, ... then 1506, ...)."""
-    lessons = {}
-    for verse in api("book-content", article_id).get("verses") or []:
-        index = verse.get("index")
-        if index is None:
-            continue
-        lessons.setdefault(int(float(index) // 500), []).append(verse)
-    return [lessons[key] for key in sorted(lessons)]
+def _tanya_phrases(article_id):
+    """A Tanya part's segments in order: each a phrase of the Hebrew with Lessons in Tanya's
+    translation and explanation of it."""
+    verses = [verse for verse in api("book-content", article_id).get("verses") or [] if verse.get("index") is not None]
+    return sorted(verses, key=lambda verse: float(verse["index"]))
+
+# Where each day's lesson starts. Chabad.org's feed only says "beginning of", "middle of" or
+# "end of" a chapter, and its book splits a chapter into blocks that are not the daily lessons
+# (Likutei Amarim chapter 4 has 6 blocks, learned over 3 days in a regular year and 5 in a
+# leap year). Taking a block per day, as the first version did, left out the blocks in between.
+# Sefaria's Tanya Yomi follows the same Chitas schedule, regular and leap years alike, and
+# names the paragraph each day starts on; the day runs to the paragraph before the next day's
+# start. Those paragraphs are then found in Chabad.org's Hebrew by their letters.
+_SEFARIA_TANYA = {"Likutei Amarim": "Tanya, Part I; Likkutei Amarim", "Shaar Hayichud Vehaemunah": "Tanya, Part II; Shaar HaYichud VehaEmunah",
+                  "Igeret HaTeshuva": "Tanya, Part III; Iggeret HaTeshuvah", "Iggeret HaKodesh": "Tanya, Part IV; Iggeret HaKodesh",
+                  "Kuntres Acharon": "Tanya, Part V; Kuntres Acharon"}
+_SEFARIA_TANYA_NAMES = {"Introduction": "Chinukh Katan", "Approbations": "Approbation"}
+
+@st.cache_data(ttl="7d", show_spinner=False)
+def _sefaria_tanya_yomi(day):
+    """Sefaria's Tanya Yomi for the day, e.g. 'Tanya, Part I; Likkutei Amarim 4:5' (where it starts)."""
+    response = requests.get(f"{SEFARIA}/calendars", params={"year": day.year, "month": day.month, "day": day.day}, timeout=20)
+    response.raise_for_status()
+    refs = [item["ref"] for item in response.json().get("calendar_items", []) if item.get("title", {}).get("en") == "Tanya Yomi"]
+    if not refs:
+        raise LookupError(f"Sefaria has no Tanya Yomi for {day}")
+    return refs[0]
+
+@st.cache_data(ttl="7d", show_spinner=False)
+def _sefaria_paragraphs(ref):
+    """[(address, Hebrew)] for one part on Sefaria; address is (paragraph,) or, for the
+    Approbations, which come as a list of approbations, (approbation, paragraph)."""
+    response = requests.get(f"{SEFARIA}/v3/texts/{requests.utils.quote(ref)}", params={"version": "hebrew"}, timeout=20)
+    response.raise_for_status()
+    versions = response.json().get("versions") or []
+    text = versions[0].get("text") if versions else None
+    if isinstance(text, str):
+        text = [text]
+    if not text:
+        raise LookupError(f"Sefaria has no Hebrew for {ref}")
+    if isinstance(text[0], list):
+        return [((n, p), para) for n, paras in enumerate(text, 1) for p, para in enumerate(paras, 1)]
+    return [((n,), para) for n, para in enumerate(text, 1)]
+
+def _sefaria_split(ref):
+    """('Tanya, Part I; Likkutei Amarim 4', (5,)) for 'Tanya, Part I; Likkutei Amarim 4:5'."""
+    match = re.match(r"^(.*Approbation) (\d+):(\d+)$", ref)
+    if match:
+        return match.group(1), (int(match.group(2)), int(match.group(3)))
+    match = re.match(r"^(.*? \d+):(\d+)$", ref) or re.match(r"^(.*\D) (\d+)$", ref)
+    if match:
+        return match.group(1), (int(match.group(2)),)
+    return ref, (1,)
+
+def sefaria_tanya_range(day):
+    """Sefaria's ref for all of the day's Tanya Yomi, e.g. 'Tanya, Part I; Likkutei Amarim 4:5-10'.
+    Sefaria's calendar names only the paragraph a day starts on; it runs to the one before the
+    next day's start, or to the end of the part."""
+    part, first = _sefaria_split(_sefaria_tanya_yomi(day))
+    addresses = [address for address, _ in _sefaria_paragraphs(part)]
+    next_part, next_first = _sefaria_split(_sefaria_tanya_yomi(day + timedelta(days=1)))
+    if next_part == part and next_first in addresses and addresses.index(next_first) > 0:
+        last = addresses[addresses.index(next_first) - 1]
+    else:
+        last = addresses[-1]
+    if first not in addresses or addresses.index(last) < addresses.index(first):
+        raise LookupError(f"Sefaria's Tanya Yomi for {day} doesn't fit {part}")
+    spell = lambda address: ":".join(str(n) for n in address)
+    joiner = " " if len(first) > 1 or not re.search(r"\d$", part) else ":"
+    return f"{part}{joiner}{spell(first)}" + ("" if last == first else f"-{spell(last)}")
+
+def _sefaria_part(section, part):
+    number = re.match(r"(?:Chapter|Epistle|Essay) (\d+)$", part)
+    if number:
+        return f"{_SEFARIA_TANYA[section]} {number.group(1)}"
+    return f"{_SEFARIA_TANYA[section]}, {_SEFARIA_TANYA_NAMES.get(part, part)}"
+
+def _letters(text):
+    # NFKD turns presentation forms (the wide ayin, shin with its dot) into plain letters.
+    return re.sub(r"[^\u05d0-\u05ea]", "", unicodedata.normalize("NFKD", re.sub(r"<[^>]+>", " ", text or "")))
+
+def _phrase_at(phrases, paragraphs, index):
+    """The first of Chabad.org's phrases where Sefaria's paragraph number index (0-based) starts."""
+    offsets, text = [], ""
+    for phrase in phrases:
+        offsets.append(len(text))
+        text += _letters((phrase.get("hebrew") or {}).get("text"))
+    expected = sum(len(_letters(para)) for _, para in paragraphs[:index])
+    wanted = _letters(paragraphs[index][1])
+    # Search with the paragraph's first letters, then a little further in: Sefaria opens a
+    # note with the word הגהה, which Chabad.org's text doesn't have.
+    for skip, size in ((0, 16), (0, 10), (4, 16), (8, 16), (16, 16)):
+        key = wanted[skip:skip + size]
+        found = [m.start() for m in re.finditer(re.escape(key), text)] if key else []
+        if found:
+            position = min(found, key=lambda at: abs(at - expected))
+            if abs(position - expected) <= max(60, len(text) // 20):
+                # The phrase it starts in; of phrases starting at the same letter (an explanation
+                # with no Hebrew of its own comes before its phrase), the first.
+                start_at = max(at for at in offsets if at <= position)
+                return offsets.index(start_at)
+    raise LookupError(f"Couldn't find paragraph {paragraphs[index][0]} in Chabad.org's text")
+
+def _tanya_day_phrases(day, section, part, phrases, position, starts_here=True):
+    """This day's share of a part that takes more than one day. Chabad.org's "beginning of" and
+    "end of" decide the outer edges, so the part's first and last phrases are never left out
+    (Sefaria starts Iggeret HaKodesh 27 at its 2nd paragraph, giving the 1st to the day before,
+    which Chabad.org calls the end of Epistle 26). starts_here=False is for the Approbations on
+    19 Kislev, which follow the Title Page and so start at their beginning."""
+    sefaria_part = _sefaria_part(section, part)
+    paragraphs = _sefaria_paragraphs(sefaria_part)
+    addresses = [address for address, _ in paragraphs]
+    first = 0
+    if starts_here and position != "beginning":
+        today_part, today_address = _sefaria_split(_sefaria_tanya_yomi(day))
+        if today_part != sefaria_part or today_address not in addresses:
+            raise LookupError(f"Sefaria has {today_part} {today_address} for {day}, Chabad.org {sefaria_part}")
+        first = addresses.index(today_address)
+    next_part, next_address = _sefaria_split(_sefaria_tanya_yomi(day + timedelta(days=1)))
+    last = len(paragraphs)
+    if position != "end" and next_part == sefaria_part and next_address in addresses:
+        last = addresses.index(next_address)
+    if last <= first:
+        raise LookupError(f"Tanya {sefaria_part}: day starts at {first + 1}, the next at {last + 1}")
+    begin = 0 if first == 0 else _phrase_at(phrases, paragraphs, first)
+    end = len(phrases) if last == len(paragraphs) else _phrase_at(phrases, paragraphs, last)
+    if end <= begin:
+        raise LookupError(f"Tanya {sefaria_part}: nothing between paragraphs {first + 1} and {last}")
+    return phrases[begin:end]
 
 def tanya_section(day, language="he"):
     """language: "he", "en" or "both". The English is Lessons in Tanya: the translation
     with Rabbi Wineberg's explanation woven in, which Chabad.org marks as text-annotation
     and the layout prints in gray."""
     section, part, position = _tanya_lesson(day)
-    node, section_node = _tanya_part(section, part)
-    lessons = _tanya_lessons(node["article-id"])
-    if position == "whole":
-        chosen = [segment for lesson in lessons for segment in lesson]
-        which = ""
-    elif position == "beginning":
-        chosen, which = lessons[0], "beginning"
-    elif position == "end":
-        chosen, which = lessons[-1], "end"
-    else:
-        # A "middle" day: count back to the day this part began.
-        back = 1
-        while back < 40:
-            earlier = _tanya_lesson(day - timedelta(days=back))
-            if earlier[:2] != (section, part) or earlier[2] == "beginning":
-                break
-            back += 1
-        if back >= len(lessons):
-            raise LookupError(f"Tanya {section}, {part}: lesson {back + 1} of {len(lessons)}")
-        chosen, which = lessons[back], "continued"
-    heading_he = (node.get("hebrew-title") or "").strip()
+    try:
+        nodes = [_tanya_part(section, part)]
+    except LookupError:
+        # 19 Kislev's lesson, where the yearly cycle starts again, is "Title Page and
+        # Approbations"; the book has them as two parts. In a leap year the Approbations go on
+        # into the next day.
+        if " and " not in part:
+            raise
+        nodes = [_tanya_part(section, name.strip()) for name in part.split(" and ")]
+    section_node = nodes[0][1]
+    chosen, headings_he = [], []
+    for n, (node, _) in enumerate(nodes):
+        phrases = _tanya_phrases(node["article-id"])
+        headings_he.append((node.get("hebrew-title") or "").strip())
+        if position == "whole" and len(nodes) == 1:
+            chosen += phrases
+        elif n + 1 < len(nodes):
+            chosen += phrases  # the Title Page, all of it
+        else:
+            chosen += _tanya_day_phrases(day, section, node.get("native-title"), phrases, position, starts_here=len(nodes) == 1)
+    which = {"beginning": "beginning", "end": "end", "middle": "continued"}.get(position, "") if len(nodes) == 1 else ""
+    node = nodes[-1][0]
     # Each segment is a phrase with its translation. Group phrases into sentences (for the
     # side-by-side rows) and sentences into paragraphs (a Hebrew phrase ending in ":").
     notes, paragraphs, sentence, paragraph = [], [], {"he": [], "en": []}, []
     for segment in chosen:
         he = _clean((segment.get("hebrew") or {}).get("text"))
-        if not he or he == heading_he:
+        if not he or he in headings_he:
             continue
         sentence["he"].append(he)
         if language != "he":
@@ -306,7 +441,7 @@ def tanya_section(day, language="he"):
             "<p>" + " ".join(t for s in paragraph for t in s["he"]) + "</p>" for paragraph in paragraphs) + "</div>"
     which_he = {"beginning": " (התחלה)", "end": " (סוף)", "continued": " (המשך)"}.get(which, "")
     portion_en = f"{section} · {part}" + (f" ({which})" if which else "")
-    portion_he = f"{section_node.get('hebrew-title') or ''} · {heading_he}{which_he}"
+    portion_he = f"{section_node.get('hebrew-title') or ''} · {' ו'.join(headings_he)}{which_he}"
     return (
         f'<section class="day tanya lang-{language}">'
         + _header("Tanya", "תניא", day, portion_en, portion_he)
