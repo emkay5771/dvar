@@ -140,14 +140,33 @@ def _chumash_portion(day):
     return {"book": match.group(1).strip(), "ranges": ranges, "aliyah": int(aliyah.group(1)) if aliyah else None,
             "parsha": parsha.group(1).strip() if parsha else "", "text": text}
 
-def chumash_section(day):
+def _rashi(verse, language):
+    """The verse's Rashi comments in one language, each as "<b>opening words</b> text"."""
+    comments = []
+    for commentator in verse.get("commentators") or []:
+        if commentator.get("type") != RASHI:
+            continue
+        for commentary in commentator.get("commentaries") or []:
+            for comment in commentary.get("hebrew" if language == "he" else "native") or []:
+                title = _clean(comment.get("title"))
+                body = _clean(comment.get("text"))
+                if title or body:
+                    comments.append((f'<b class="dh">{title}</b> ' if title else "") + body)
+    return comments
+
+def chumash_section(day, language="he"):
+    """language: "he" or "both". Each pasuk is followed by its own Rashi, as on Chabad.org.
+    Hebrew runs in two columns, which takes about a quarter fewer pages than one wide column:
+    every pasuk and every Rashi ends in a part-empty line, and those cost less in a narrower
+    column. Bilingual pairs the English (left) with the Hebrew (right), pasuk by pasuk, each
+    with its Rashi in that language."""
     portion = _chumash_portion(day)
     book = next((node for node in api("book-navigation", CHUMASH_BOOK).get("children") or []
                  if node.get("native-title") == portion["book"]), None)
     if book is None:
         raise LookupError(f"Chumash book {portion['book']!r} not found")
     chapters = {int(re.sub(r"\D", "", c.get("native-title") or "0") or 0): c for c in book.get("children") or []}
-    blocks = []
+    blocks, pesukim = [], 0
     for c1, v1, c2, v2 in portion["ranges"]:
         for chapter in range(c1, c2 + 1):
             node = chapters.get(chapter)
@@ -156,28 +175,27 @@ def chumash_section(day):
             first = v1 if chapter == c1 else 1
             last = v2 if chapter == c2 else 10 ** 6
             if chapter != c1 or not blocks:
-                blocks.append(f'<div class="chapter-mark he">פרק {hebrew_numeral(chapter)}</div>')
+                mark = f"Chapter {chapter} · פרק {hebrew_numeral(chapter)}" if language == "both" else f"פרק {hebrew_numeral(chapter)}"
+                blocks.append(f'<div class="chapter-mark">{mark}</div>')
             for verse in api("book-content", node["article-id"]).get("verses") or []:
                 number = int(re.sub(r"\D", "", (verse.get("native") or {}).get("number") or "0") or 0)
                 if not first <= number <= last:
                     continue
+                pesukim += 1
                 he_number = (verse.get("hebrew") or {}).get("number") or hebrew_numeral(number)
-                comments = []
-                for commentator in verse.get("commentators") or []:
-                    if commentator.get("type") != RASHI:
-                        continue
-                    for commentary in commentator.get("commentaries") or []:
-                        for comment in commentary.get("hebrew") or []:
-                            title = _clean(comment.get("title"))
-                            body = _clean(comment.get("text"))
-                            comments.append((f'<b class="dh">{title}</b> ' if title else "") + body)
-                # Each pasuk is followed by its own Rashi, as on Chabad.org.
-                blocks.append(
-                    '<div class="pasuk">'
-                    f'<p class="ptext he"><span class="vnum">{he_number}</span>{_clean((verse.get("hebrew") or {}).get("text"))}</p>'
-                    + (f'<div class="prashi he">{" ".join(comments)}</div>' if comments else "")
-                    + "</div>")
-    if not any('class="pasuk"' in block for block in blocks):
+                he_text = _clean((verse.get("hebrew") or {}).get("text"))
+                en_text = _clean((verse.get("native") or {}).get("text"))
+                rashi_he = _rashi(verse, "he")
+                rashi_en = _rashi(verse, "en") if language == "both" else []
+                he = (f'<p class="ptext he"><span class="vnum">{he_number}</span>{he_text}</p>'
+                      + (f'<div class="prashi he">{" ".join(rashi_he)}</div>' if rashi_he else ""))
+                en = (f'<p class="ptext-en"><span class="vnum">{number}</span>{en_text}</p>'
+                      + (f'<div class="prashi-en"><span class="rlabel">Rashi</span> {" ".join(rashi_en)}</div>' if rashi_en else ""))
+                if language == "both":
+                    blocks.append(f'<div class="crow"><div class="en">{en}</div><div class="he">{he}</div></div>')
+                else:
+                    blocks.append(f'<div class="pasuk">{he}</div>')
+    if not pesukim:
         raise LookupError(f"No verses found for {portion['text']!r}")
     aliyah_en, aliyah_he = ALIYOS.get(portion["aliyah"], ("", ""))
     parsha_he = parshios.getparsha_string(dates.GregorianDate(day.year, day.month, day.day), israel=False, hebrew=True) or ""
@@ -186,9 +204,9 @@ def chumash_section(day):
     portion_en = f"Parshat {portion['parsha']} · {aliyah_en} · {book_en} {ref}"
     portion_he = f"פרשת {parsha_he} · {aliyah_he}" if parsha_he else aliyah_he
     return (
-        '<section class="day chumash">'
+        f'<section class="day chumash lang-{language}">'
         + _header("Chumash with Rashi", "חומש עם פירוש רש״י", day, portion_en, portion_he)
-        + "".join(blocks)
+        + f'<div class="chumash-{language}">' + "".join(blocks) + "</div>"
         + "</section>"
     )
 
@@ -469,13 +487,23 @@ sup.fn { font-size: 7pt; color: var(--rule); font-weight: 600; }
 .credit { margin-top: 14pt; font-size: 8.5pt; color: var(--muted); text-align: center; border-top: 0.6pt solid var(--soft); padding-top: 4pt; }
 
 /* Chumash: each pasuk, then its Rashi */
-.chapter-mark { text-align: center; font-size: 10.5pt; font-weight: 700; color: var(--muted); margin: 4pt 0 6pt; letter-spacing: 0.04em; }
+.chapter-mark { text-align: center; font-size: 10.5pt; font-weight: 700; color: var(--muted); margin: 2pt 0 6pt; letter-spacing: 0.04em; break-after: avoid; }
 .chapter-mark::before, .chapter-mark::after { content: "—"; color: var(--rule); margin: 0 6pt; }
+.chumash-he { direction: rtl; columns: 2; column-gap: 20pt; column-rule: 0.5pt solid var(--soft); }
 .pasuk { margin: 0 0 7pt; }
-.ptext { font-size: 17pt; line-height: 1.8; margin: 0; text-align: justify; break-inside: avoid; break-after: avoid; }
-.ptext .vnum { font-size: 9.5pt; font-weight: 700; color: var(--rule); margin-left: 5pt; vertical-align: 3pt; }
-.prashi { font-family: 'Noto Serif Hebrew', serif; font-size: 11pt; line-height: 1.65; text-align: justify; color: #3a352d; margin: 2pt 0 0; padding: 1pt 10pt 1pt 0; border-right: 2pt solid var(--soft); }
+.ptext { font-size: 15pt; line-height: 1.75; margin: 0; text-align: justify; break-inside: avoid; break-after: avoid; }
+.ptext .vnum { font-size: 8.5pt; font-weight: 700; color: var(--rule); margin-left: 4pt; vertical-align: 3pt; }
+.prashi { font-family: 'Noto Serif Hebrew', serif; font-size: 10pt; line-height: 1.6; text-align: justify; color: #3a352d; margin: 2pt 0 0; padding: 1pt 8pt 1pt 0; border-right: 2pt solid var(--soft); }
 .prashi .dh { font-weight: 700; color: var(--ink); }
+.ptext-en { font-size: 12pt; line-height: 1.45; margin: 0; text-align: justify; break-inside: avoid; break-after: avoid; }
+.ptext-en .vnum { font-size: 8pt; font-weight: 700; color: var(--rule); margin-right: 4pt; vertical-align: 2pt; }
+.prashi-en { font-size: 10pt; line-height: 1.4; text-align: justify; color: #3a352d; margin: 2pt 0 0; padding: 1pt 0 1pt 8pt; border-left: 2pt solid var(--soft); }
+.prashi-en .rlabel { font-weight: 600; font-size: 8pt; text-transform: uppercase; letter-spacing: 0.06em; color: var(--rule); margin-right: 2pt; }
+.prashi-en .dh { font-weight: 600; color: var(--ink); }
+.prashi-en .hebrew { font-family: 'Noto Serif Hebrew', serif; }
+.crow { display: grid; grid-template-columns: 1fr 1fr; gap: 16pt; padding: 4pt 0 5pt; border-bottom: 0.4pt solid var(--soft); }
+.crow .he .ptext { font-size: 14.5pt; break-after: auto; }
+.crow .en .ptext-en { font-size: 11.5pt; break-after: auto; }
 
 /* Tanya */
 .tanya-text { font-size: 15pt; line-height: 1.85; text-align: justify; }
