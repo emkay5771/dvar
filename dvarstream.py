@@ -741,11 +741,21 @@ def find_next_top_level_bookmark(toc, current_index, last_page):
 # guessing an offset, find the headings and decide each boundary by looking at the page.
 
 BOOKLET_DAYS = ['יום ראשון', 'יום שני', 'יום שלישי', 'יום רביעי', 'יום חמישי', 'יום שישי', 'שבת קודש']
-# Running header sits at y~27 and the folio/footer within ~40pt of the bottom; both repeat
-# the day name on every page, so they have to be excluded or they drown out the real heading.
+# Running header sits at y~27 (ending by y~41) and the folio/footer within ~40pt of the
+# bottom; both repeat the day name on every page, so they have to be excluded or they
+# drown out the real heading.
 BOOKLET_HEADER_Y = 45
 BOOKLET_FOOTER_MARGIN = 40
+# Day headings are looked for from slightly higher up than body text. A day that starts at
+# the very top of a page has its heading at y~44.9 -- just above BOOKLET_HEADER_Y -- so a
+# single cutoff threw those headings away with the running header (the 11-5-26 booklet's
+# Chumash lost Monday and Friday this way and fell back to estimated ranges). The body
+# cutoff can't simply come down to match: Rambam pages carry a second header line
+# ("מתוך מהדורת חזק...") at y~44.2, and counting that as body text above a heading would
+# pull the next day's first page into the day before it.
+BOOKLET_HEADING_TOP_Y = 42
 # Constants used only by the legacy fallback below, kept so its behaviour is unchanged.
+# Its keys are also the day-based sections the app takes from the booklet.
 BOOKLET_LEGACY_OFFSETS = {
     'חומש יומי': 1,
     'תניא יומי': 2,
@@ -753,7 +763,7 @@ BOOKLET_LEGACY_OFFSETS = {
     'רמב"ם - פרק אחד ליום': 1,
 }
 
-def _booklet_body_lines(doc, page_number):
+def _booklet_body_lines(doc, page_number, top=BOOKLET_HEADER_Y):
     page = doc[page_number]
     height = page.rect.height
     lines = []
@@ -761,7 +771,7 @@ def _booklet_body_lines(doc, page_number):
         if block.get("type"):
             continue  # image block, no text spans
         for line in block["lines"]:
-            if line["bbox"][1] > BOOKLET_HEADER_Y and line["bbox"][3] < height - BOOKLET_FOOTER_MARGIN:
+            if line["bbox"][1] > top and line["bbox"][3] < height - BOOKLET_FOOTER_MARGIN:
                 lines.append(line)
     lines.sort(key=lambda ln: ln["bbox"][1])
     return lines
@@ -799,23 +809,76 @@ def _booklet_font_key(span):
         font = font[7:]
     return (font, round(span["size"], 2))
 
+def _booklet_span_matches(span, signature):
+    font, size = _booklet_font_key(span)
+    return font == signature[0] and abs(size - signature[1]) < 0.05
+
+# The publisher writes the quote in רמב"ם either as a plain " or as the Hebrew gershayim ״
+# (U+05F4). Booklets switched to ״ from Lech Lecha 5787 (Oct 2026) while the titles in
+# opttouse() use ", so the exact-match lookup found no Rambam section and those days
+# silently dropped out of the PDF for weeks. Compare titles with the quote marks folded to their plain forms.
+BOOKLET_TITLE_PUNCTUATION = str.maketrans({
+    "\u05f4": '"', "\u05f3": "'",                                  # gershayim, geresh
+    "\u201c": '"', "\u201d": '"', "\u2018": "'", "\u2019": "'",  # curly quotes
+})
+
+def _booklet_title_key(text):
+    return _booklet_normalize(text).translate(BOOKLET_TITLE_PUNCTUATION)
+
+def _booklet_day_bookmarks(toc, index):
+    # The per-day sub-bookmarks under the top-level bookmark at toc[index].
+    days = []
+    for sub in toc[index + 1:]:
+        if sub[0] == 1:
+            break
+        if sub[0] == 2 and sub[1] in BOOKLET_DAYS:
+            days.append(sub)
+    return days
+
+def _booklet_page_has_heading(doc, page_number, day, signature):
+    return any(
+        _booklet_line_day(line) == day and any(_booklet_span_matches(span, signature) for span in line["spans"])
+        for line in _booklet_body_lines(doc, page_number, top=BOOKLET_HEADING_TOP_Y)
+    )
+
+def _booklet_section_start(doc, title_page, days):
+    # The 1-based page a section really starts on. Normally that's its top-level bookmark,
+    # which in a correct booklet is the same page as its first day's bookmark. But the
+    # 11-5-26 booklet pointed תניא יומי at page 86 when Tanya starts on 78 (its day
+    # bookmarks were right): the scan began mid-Thursday and found 4 of 7 days, and the
+    # Chumash section before it was taken to run on through most of Tanya. A section can't
+    # start after its own first day, so when the top-level bookmark lands later than the
+    # first day's and that day's heading isn't on the top-level page, go by the day
+    # bookmark. The heading check keeps the old behaviour when it's the day bookmark that
+    # is wrong (day bookmarks have been off by a few pages before).
+    first_day, first_day_page = (days[0][1], days[0][2]) if days else (None, 0)
+    if not 0 < first_day_page < title_page:
+        return title_page
+    signature = _booklet_heading_signature(doc, {"days": days})
+    if signature is None or _booklet_page_has_heading(doc, title_page - 1, first_day, signature):
+        return title_page
+    logger.warning("Top-level bookmark at page %d is past its first day (page %d); using the day bookmark",
+                   title_page, first_day_page)
+    return first_day_page
+
 def _booklet_section(doc, toc, section_title):
-    # Locate a top-level section plus its per-day sub-bookmarks, and work out the last
-    # page the section can possibly occupy (one before the next top-level bookmark).
+    # Locate a top-level section plus its per-day sub-bookmarks, and work out the pages it
+    # can possibly occupy: from where it starts to one before the next section starts.
+    wanted = _booklet_title_key(section_title)
     for i, entry in enumerate(toc):
-        if entry[0] != 1 or entry[1] != section_title or not entry[2]:
+        if entry[0] != 1 or _booklet_title_key(entry[1]) != wanted or not entry[2]:
             continue
-        days = []
-        for sub in toc[i + 1:]:
-            if sub[0] == 1:
-                break
-            if sub[0] == 2 and sub[1] in BOOKLET_DAYS:
-                days.append(sub)
+        days = _booklet_day_bookmarks(toc, i)
         if not days:
             continue
-        next_top = next((s[2] for s in toc[i + 1:] if s[0] == 1), None)
-        hi = (next_top - 2) if next_top else doc.page_count - 1
-        return {"lo": entry[2] - 1, "hi": hi, "days": days}
+        start = _booklet_section_start(doc, entry[2], days)
+        next_index = next((j for j in range(i + 1, len(toc)) if toc[j][0] == 1 and toc[j][2] > 0), None)
+        if next_index is None:
+            hi = doc.page_count - 1
+        else:
+            next_start = _booklet_section_start(doc, toc[next_index][2], _booklet_day_bookmarks(toc, next_index))
+            hi = next_start - 2
+        return {"lo": start - 1, "hi": hi, "days": days}
     return None
 
 def _booklet_heading_signature(doc, section):
@@ -834,7 +897,7 @@ def _booklet_heading_signature(doc, section):
         if not 0 <= page - 1 < doc.page_count:
             continue
         best = None
-        for line in _booklet_body_lines(doc, page - 1):
+        for line in _booklet_body_lines(doc, page - 1, top=BOOKLET_HEADING_TOP_Y):
             if day not in _booklet_line_text(line):
                 continue
             for span in line["spans"]:
@@ -863,19 +926,16 @@ def _booklet_scan_day_headings(doc, section, signature):
     found = []
     seen = set()
     for page_number in range(max(section["lo"], 0), min(section["hi"], doc.page_count - 1) + 1):
-        for line in _booklet_body_lines(doc, page_number):
+        for line in _booklet_body_lines(doc, page_number, top=BOOKLET_HEADING_TOP_Y):
             day = _booklet_line_day(line)
             if day is None or day in seen:
                 continue
             # A line is a heading when it names a day and is set in the heading face --
             # tested per span but without requiring that span to hold the day name itself,
             # since the split between spans is not stable across PyMuPDF versions.
-            for span in line["spans"]:
-                font, size = _booklet_font_key(span)
-                if font == signature[0] and abs(size - signature[1]) < 0.05:
-                    found.append((page_number, line["bbox"][1], day))
-                    seen.add(day)
-                    break
+            if any(_booklet_span_matches(span, signature) for span in line["spans"]):
+                found.append((page_number, line["bbox"][1], day))
+                seen.add(day)
     return found
 
 def _booklet_day_ranges_by_heading(doc, section):
@@ -1039,6 +1099,13 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
             # Day ranges are resolved once per section rather than once per selected day,
             # since the heading scan reads every page of the section.
             day_ranges = booklet_day_ranges(doc, toc, q) #type: ignore
+            if day_ranges is None and q in BOOKLET_LEGACY_OFFSETS:
+                # A day-based section that isn't in the booklet used to just drop out of the
+                # PDF with nothing said -- that is how Rambam went missing for several weeks
+                # in Cheshvan 5787. Nothing else below picks these sections up, so tell the user.
+                logger.warning("Section %s not found in the Dvar Malchus bookmarks", q)
+                st.warning(f"Couldn't find {q} in this week's Dvar Malchus, so it is not in this PDF. "
+                           "To get it from Chabad.org instead, turn off the Dvar Malchus toggle and create the PDF again.")
             if day_ranges:
                 for z in dow:
                     if z not in day_ranges:
@@ -1282,7 +1349,8 @@ st.markdown("**Any major bugs noticed? Features that you'd like to see? Comments
 
 if not submit_button:
     with st.expander("**Changelog:**"):
-        st.markdown("**New in latest update (7-19-26)**: <br/> **[FIX]** Days taken from Dvar Malchus now include their full shiur. Because a day's learning ends partway down a page rather than at a page break, the app used to cut some days short or add a page of the next day — Tanya was losing the end of most days every week. Day boundaries are now found on the page itself instead of being estimated. <br/> **[NEW]** Rambam (1 chapter) in Hebrew now comes from Dvar Malchus like the 3-chapter cycle, instead of always falling back to Chabad.org. <br/> **[FIX]** Selecting more than one Rambam option at once no longer repeats the same section twice. <br/> **[NEW]** Dvar Malchus downloads are much faster (a couple of seconds instead of around forty) — the app now fetches the booklet directly rather than driving a browser, falling back to the old method if needed.", unsafe_allow_html=True)
+        st.markdown("**New in latest update (11-5-26)**: <br/> **[FIX]** Rambam in Hebrew (3 chapters and 1 chapter) was missing from PDFs made from Dvar Malchus for the last few weeks, because the booklet changed how it writes רמב״ם in its titles. It is back. <br/> **[FIX]** Chumash and Tanya no longer fall back to estimated page ranges when a day starts at the very top of a page, or when the booklet's Tanya bookmark points to the wrong page. This week that had added most of Tanya to the end of Chumash for Shabbos. <br/> **[NEW]** If a section you picked can't be found in this week's Dvar Malchus, the app now tells you, instead of quietly leaving it out.", unsafe_allow_html=True)
+        st.markdown("**Past Changes (7-19-26)**: <br/> **[FIX]** Days taken from Dvar Malchus now include their full shiur. Because a day's learning ends partway down a page rather than at a page break, the app used to cut some days short or add a page of the next day — Tanya was losing the end of most days every week. Day boundaries are now found on the page itself instead of being estimated. <br/> **[NEW]** Rambam (1 chapter) in Hebrew now comes from Dvar Malchus like the 3-chapter cycle, instead of always falling back to Chabad.org. <br/> **[FIX]** Selecting more than one Rambam option at once no longer repeats the same section twice. <br/> **[NEW]** Dvar Malchus downloads are much faster (a couple of seconds instead of around forty) — the app now fetches the booklet directly rather than driving a browser, falling back to the old method if needed.", unsafe_allow_html=True)
         st.markdown("**Past Changes (7-3-26)**: <br/> **[FIX]** Fixed a crash when two people generated a booklet from Dvar Malchus at nearly the same time. <br/> **[NEW]** Modernized the app's dependencies (Streamlit and others) and swapped out a few unmaintained UI components for Streamlit's own native ones. <br/> **[NEW]** Added a custom dark theme. <br/> **[NEW]** Chumash/Tanya/Rambam/Hayom Yom fetches are now shared across everyone requesting the same day, so repeat generations are faster and put less load on Chabad.org.", unsafe_allow_html=True)
         st.markdown("**Past Changes (7-2-26)**: <br/> **[FIX]** Dvar Malchus downloads were silently failing in headless mode; fixed by explicitly allowing Chrome to save the file. <br/> **[FIX]** Chabad.org's daily study pages had started intermittently failing (an anti-bot check); fetches now retry automatically with a fresh session before giving up. <br/> **[NEW]** Added Sefaria as a 3rd fallback source for Chumash (with Rashi), Tanya, and Rambam if both Dvar Malchus and Chabad.org are unavailable, including correct handling of combined/double-parsha weeks. <br/> **[FIX]** Bilingual Rambam now shows Hebrew and English side by side instead of one after the other. <br/> **[FIX]** A single Chabad.org or Sefaria hiccup on one material no longer crashes the whole app.", unsafe_allow_html=True)
         st.markdown("**Past Changes (1-17-24)**: <br/> **[FIX]** Updated location of Dvar Malchus download button.", unsafe_allow_html=True)
