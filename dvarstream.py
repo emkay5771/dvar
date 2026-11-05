@@ -21,7 +21,8 @@ import streamlit as st #type: ignore
 import pypdf as PyPDF2 #type: ignore
 from pypdf import PdfWriter as PdfMerger #type: ignore
 import glob
-from pyluach import parshios, dates, hebrewcal
+from pyluach import parshios, dates
+import chabad_texts
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("dvarstream"); append_material = lambda doc_out, path, label: doc_out.insert_pdf(fitz.open(path)) if os.path.exists(path) else logger.warning("Skipping %s: %s was not created (all fetch tiers failed).", label, path)
@@ -65,51 +66,17 @@ def render_html_to_pdf(html, pdf_options):
     try:
         encoded = b64encode(html.encode("utf-8")).decode("ascii")
         driver.get(f"data:text/html;charset=utf-8;base64,{encoded}")
+        # The Chabad.org layouts load web fonts (Hebrew with cantillation marks).
+        # Printing before they arrive falls back to whatever fonts the server has, so wait
+        # for them, but never fail the render over it.
+        try:
+            driver.set_script_timeout(15)
+            driver.execute_async_script("document.fonts.ready.then(() => arguments[arguments.length - 1]())")
+        except Exception:
+            logger.warning("Web fonts did not finish loading before printing", exc_info=True)
         return driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
     finally:
         driver.quit()
-
-# Each daily study page that fails costs about 45 s (three Chrome launches, 10 s wait each)
-# before the Sefaria fallback runs, and a week of Chumash + Tanya + Rambam is 21 pages. In
-# Nov 2026 every page failed (Cloudflare check), so one PDF could take 15 minutes. After a
-# page fails every attempt, skip Chabad.org pages for a while and go straight to the
-# fallback. This is shared by all sessions in the process, like the caches.
-CHABAD_PAGE_COOLDOWN = timedelta(minutes=30)
-_chabad_pages_failed_at = None
-
-@st.cache_data(ttl="24h", show_spinner=False)
-def fetch_chabad_page(url, pdf_options, attempts=3, wait_seconds=10, extra_sleep=0):
-    global _chabad_pages_failed_at
-    if _chabad_pages_failed_at and dt.now() - _chabad_pages_failed_at < CHABAD_PAGE_COOLDOWN:
-        raise RuntimeError(f"Skipping {url}: Chabad.org daily study pages failed at {_chabad_pages_failed_at:%H:%M}")
-    # Chabad.org's Cloudflare bot check is intermittent, not a hard block -- observed live,
-    # the exact same page succeeds outright on one request and times out on the very next.
-    # A fresh browser session on retry often gets through, so retry a few times with a
-    # fresh driver before giving up and letting the caller fall through to the next tier.
-    # Cached cross-session by (url, pdf_options) -- url already encodes the date and any
-    # material-specific params (chapters/language), pdf_options encodes the user's scale
-    # setting, so different scales or days naturally get separate cache entries. A failed
-    # fetch raises rather than returns, and st.cache_data never caches a raised exception,
-    # so failures are always retried fresh rather than "cached as broken". Fewer redundant
-    # hits against chabad.org across all users also means less chance of tripping whatever
-    # triggers its intermittent Cloudflare check in the first place.
-    last_exc = None
-    for attempt in range(1, attempts + 1):
-        driver = webdriver.Chrome(options=options)
-        try:
-            driver.get(url)
-            WebDriverWait(driver, wait_seconds).until(EC.presence_of_element_located((By.ID, "content")))
-            if extra_sleep:
-                time.sleep(extra_sleep)
-            return driver.execute_cdp_cmd("Page.printToPDF", pdf_options)
-        except Exception as exc:
-            last_exc = exc
-            logger.warning("Chabad.org fetch attempt %d/%d failed for %s", attempt, attempts, url, exc_info=True)
-        finally:
-            driver.quit()
-    _chabad_pages_failed_at = dt.now()
-    logger.warning("Chabad.org daily study pages failed; skipping them until %s", _chabad_pages_failed_at + CHABAD_PAGE_COOLDOWN)
-    raise last_exc
 
 def dvarget(session2): # attempts to retrieve dvar malchus pdf
     # dvar{session2}.pdf is a cross-user cache (same weekly booklet for everyone within
@@ -256,237 +223,72 @@ def _dvarget_locked(session2):
     finally:
         driver.quit()
 
-def chabadget(dor, opt, session): # retrieves chumash and tanya from chabad.org
-    pdf_options = {
-    'scale': scale,
-    'margin-top': '0.1in',
-    'margin-right': '0.1in',
-    'margin-bottom': '0.1in',
-    'margin-left': '0.1in',
-    }
-    if os.path.exists(f"Chumash{session}.pdf") != True:
-        merger = PdfMerger()
-        appended_any = False
-        if 'Chumash' in opt:
-            for i in dor:
-                try:
-                    url = f"https://www.chabad.org/dailystudy/torahreading.asp?tdate={i}#lt=he"
-                    pdf = fetch_chabad_page(url, pdf_options)
-                except Exception:
-                    # Leave Chumash{session}.pdf absent on failure (rather than crash the
-                    # whole Streamlit run) so the caller can fall through to the next tier.
-                    logger.warning("Chabad.org Chumash fetch failed for %s", i, exc_info=True)
-                    continue
-                with open(f"temp{session}.pdf", "ab") as f:
-                    f.write(b64decode(pdf["data"]))
-                merger.append(f"temp{session}.pdf")
-                appended_any = True
+# Chumash, Tanya, Rambam and Hayom Yom from Chabad.org. chabad_texts.py fetches each day's
+# text from Chabad.org's Torah Texts API and lays it out for print; these wrappers render it
+# and write the per-tab files the rest of the app expects. If Chabad.org fails for any day
+# of Chumash, Tanya or Rambam, no file is written, so ensure_material() falls back to
+# Sefaria for the whole material instead of mixing sources.
+# 'Tanya' is the Hebrew (and comes from the Dvar Malchus booklet when that's in use).
+CHABAD_TANYA_OPTIONS = [("Tanya", "he"), ("Tanya-Bilingual", "both"), ("Tanya-English", "en")]
+TANYA_NAMES = [name for name, _ in CHABAD_TANYA_OPTIONS]
+CHABAD_RAMBAM_OPTIONS = [("Rambam (3)-Hebrew", 3, "he"), ("Rambam (3)-Bilingual", 3, "both"), ("Rambam (3)-English", 3, "en"),
+                         ("Rambam (1)-Hebrew", 1, "he"), ("Rambam (1)-Bilingual", 1, "both"), ("Rambam (1)-English", 1, "en")]
 
-            if appended_any:
-                merger.write(f"Chumash{session}.pdf")
-            merger.close()
-            if os.path.exists(f"temp{session}.pdf"):
-                os.remove(f"temp{session}.pdf")
-    if os.path.exists(f"Tanya{session}.pdf") != True:
-        merger2 = PdfMerger()
-        appended_any = False
-        if 'Tanya' in opt:
-            for i in dor:
-                try:
-                    url = f"https://www.chabad.org/dailystudy/tanya.asp?tdate={i}&commentary=false#lt=he"
-                    pdf = fetch_chabad_page(url, pdf_options, extra_sleep=3)
-                except Exception:
-                    logger.warning("Chabad.org Tanya fetch failed for %s", i, exc_info=True)
-                    continue
-                with open(f"temp{session}.pdf", "ab") as f:
-                    f.write(b64decode(pdf["data"]))
-                merger2.append(f"temp{session}.pdf")
-                appended_any = True
+def _chabad_dates(dor):
+    # dor holds 'MM%2FDD%2FYYYY' strings (see daytorambam()).
+    return [date(int(y), int(m), int(d)) for m, d, y in (i.split("%2F") for i in dor)]
 
-            if appended_any:
-                merger2.write(f"Tanya{session}.pdf")
-            merger2.close()
-            if os.path.exists(f"temp{session}.pdf"):
-                os.remove(f"temp{session}.pdf")
+def _chabad_pdf(material, sections, scale_value, path):
+    pdf = render_html_to_pdf(chabad_texts.page(material, sections),
+                             {"scale": scale_value, "printBackground": True, "preferCSSPageSize": True})
+    with open(f"{path}.tmp", "wb") as f:
+        f.write(b64decode(pdf["data"]))
+    os.replace(f"{path}.tmp", path)
 
-def rambamenglish(dor, session, opt): # retrieves all rambam versions from chabad.org
-    pdf_options = {
-    'scale': scale2,
-    'margin-top': '0.1in',
-    'margin-right': '0.1in',
-    'margin-bottom': '0.1in',
-    'margin-left': '0.1in',
-    }
-    merger = PdfMerger()
-    if os.path.exists(f"Rambam{session}.pdf") != True:
-        appended_any = False
-        for i in dor:
-            lang = ""
-            chapters = ""
-            if "Rambam (3)-Bilingual" in opt:
-                    lang = "both"
-                    chapters = "3"
-            elif "Rambam (3)-Hebrew" in opt:
-                lang = "he"
-                chapters = "3"
-            elif "Rambam (3)-English" in opt:
-                lang = "primary"
-                chapters = "3"
-            elif "Rambam (1)-Bilingual" in opt:
-                lang = "both"
-                chapters = "1"
-            elif "Rambam (1)-Hebrew" in opt:
-                lang = "he"
-                chapters = "1"
-            elif "Rambam (1)-English" in opt:
-                lang = "primary"
-                chapters = "1"
-            try:
-                url = f"https://www.chabad.org/dailystudy/rambam.asp?rambamchapters={chapters}&tdate={i}#lt={lang}"
-                pdf = fetch_chabad_page(url, pdf_options)
-            except Exception:
-                logger.warning("Chabad.org Rambam fetch failed for %s", i, exc_info=True)
-                continue
-            with open(f"temp{session}.pdf", "ab") as f:
-                f.write(b64decode(pdf["data"]))
+def chabadget(dor, opt, session): # Chumash and Tanya from chabad.org
+    # Every Tanya option picked (Hebrew, Bilingual, English) goes into the one Tanya file.
+    builds = [("Chumash", "chumash", [lambda day: chabad_texts.chumash_section(day)] if "Chumash" in opt else []),
+              ("Tanya", "tanya", [(lambda language: lambda day: chabad_texts.tanya_section(day, language))(language)
+                                  for name, language in CHABAD_TANYA_OPTIONS if name in opt])]
+    for name, material, variants in builds:
+        if not variants or os.path.exists(f"{name}{session}.pdf"):
+            continue
+        try:
+            sections = [build(day) for build in variants for day in _chabad_dates(dor)]
+        except Exception:
+            logger.warning("Chabad.org %s failed; leaving it to the fallback", name, exc_info=True)
+            continue
+        _chabad_pdf(material, sections, scale, f"{name}{session}.pdf")
 
-            merger.append(f"temp{session}.pdf")
-            appended_any = True
-
-        if appended_any:
-            merger.write(f"Rambam{session}.pdf")
-        merger.close()
-        if os.path.exists(f"temp{session}.pdf"):
-            os.remove(f"temp{session}.pdf")
-
-# Hayom Yom comes from Chabad.org's Torah Texts API, the JSON service behind its online
-# library reader (chabad.org/torah-texts). Chabad.org's robots.txt blocks /api/ in general
-# but explicitly allows /api/v2/chabadorg/torahtexts/, and it isn't behind the Cloudflare
-# check that the daily study pages are. Those pages failed on every request from
-# Streamlit Cloud in Nov 2026, so Hayom Yom, which has no other source, was missing from
-# every PDF. The API also answers in about a quarter of a second, with no browser.
-CHABAD_TORAHTEXTS_API = "https://www.chabad.org/api/v2/chabadorg/torahtexts"
-CHABAD_API_HEADERS = {"User-Agent": "DvarCreator/1.0 (+https://dvarmaker.streamlit.app)"}
-HAYOM_YOM_BOOK_ID = 5742
-# pyluach month numbers to the month sections of the Hayom Yom book. The book follows the
-# calendar of 5703, a leap year, so it has both Adar I and Adar II.
-HAYOM_YOM_MONTHS = {1: "Nissan", 2: "Iyar", 3: "Sivan", 4: "Tamuz", 5: "Menachem Av", 6: "Elul",
-                    7: "Tishrei", 8: "Cheshvan", 9: "Kislev", 10: "Tevet", 11: "Shevat",
-                    12: "Adar I", 13: "Adar II"}
-HEBREW_NUMERALS = {"א": 1, "ב": 2, "ג": 3, "ד": 4, "ה": 5, "ו": 6, "ז": 7, "ח": 8, "ט": 9,
-                   "י": 10, "כ": 20, "ל": 30}
-
-@st.cache_data(ttl="7d", show_spinner=False)
-def chabad_torahtexts(endpoint, article_id):
-    # Raises on failure so st.cache_data never keeps a failed call.
-    response = requests.get(f"{CHABAD_TORAHTEXTS_API}/{endpoint}/{article_id}", headers=CHABAD_API_HEADERS, timeout=20)
-    response.raise_for_status()
-    return response.json()
-
-def _hebrew_day_number(title):
-    # "כח חשון" -> 28, "טו שבט" -> 15, "ל שבט, ר"ח" -> 30
-    token = re.split(r"[\s,]", title.strip(), maxsplit=1)[0]
-    return sum(HEBREW_NUMERALS.get(char, 0) for char in token)
-
-def _hayomyom_index():
-    # {"Cheshvan": {28: article id, ...}, ...}. The English day titles aren't consistent
-    # ("Tevet 1" but "1 Adar I"), so read the day from the Hebrew title and the month from
-    # the section it sits in. Kislev is split across two sections (1-18 and 19-29).
-    index = {}
-    for month in chabad_torahtexts("book-navigation", HAYOM_YOM_BOOK_ID).get("children") or []:
-        name = re.sub(r"\s+\d.*$", "", month.get("native-title") or "").strip()
-        for day in month.get("children") or []:
-            number = _hebrew_day_number(day.get("hebrew-title") or "")
-            if 1 <= number <= 30:
-                index.setdefault(name, {})[number] = day
-    return index
-
-def hayomyom_days(gregorian_date):
-    # The Hayom Yom entries Chabad.org shows for a date, as navigation nodes. It follows
-    # Chabad.org's own daily page: in a regular year Adar shows both the Adar I and the
-    # Adar II entry, and a 30th day the book doesn't have (30 Cheshvan or 30 Kislev, which
-    # 5703 lacked) shows day 29.
-    hebrew = dates.GregorianDate(gregorian_date.year, gregorian_date.month, gregorian_date.day).to_heb()
-    if hebrew.month == 12 and not hebrewcal.Year(hebrew.year).leap:
-        months = ["Adar I", "Adar II"]
-    else:
-        months = [HAYOM_YOM_MONTHS[hebrew.month]]
-    index = _hayomyom_index()
-    found = []
-    for month in months:
-        days = index.get(month, {})
-        candidates = [number for number in days if number <= hebrew.day]
-        if candidates:
-            found.append(days[max(candidates)])
-    return found
-
-def _chabad_text_to_html(text, notes):
-    # Footnotes come inline as <co:footnote>; number them across the whole entry (notes is
-    # shared between its paragraphs) and list them under it. Links point at relative
-    # Chabad.org paths that mean nothing in a PDF, so keep only their text.
-    def footnote(match):
-        notes.append(match.group(1))
-        return f"<sup>{len(notes)}</sup>"
-    text = re.sub(r"<script\b.*?</script>", "", text or "", flags=re.S | re.I)
-    text = re.sub(r"</?a\b[^>]*>", "", text)
-    return re.sub(r"<co:footnote\b[^>]*>(.*?)</co:footnote>", footnote, text, flags=re.S)
+def rambamenglish(dor, session, opt): # all Rambam versions from chabad.org
+    # Every Rambam option picked is included, one after another. This used to fetch only
+    # the first one, because each needed its own Chabad.org page.
+    if os.path.exists(f"Rambam{session}.pdf"):
+        return
+    try:
+        sections = [chabad_texts.rambam_section(day, chapters, language)
+                    for option, chapters, language in CHABAD_RAMBAM_OPTIONS if option in opt
+                    for day in _chabad_dates(dor)]
+    except Exception:
+        logger.warning("Chabad.org Rambam failed; leaving it to the fallback", exc_info=True)
+        return
+    if sections:
+        _chabad_pdf("rambam", sections, scale2, f"Rambam{session}.pdf")
 
 def hayomyom(dor, session): #gets hayom yom from chabad.org
-    pdf_options = {
-    'scale': scale3,
-    'margin-top': '0.4in',
-    'margin-right': '0.5in',
-    'margin-bottom': '0.4in',
-    'margin-left': '0.5in',
-    }
+    # No other source has Hayom Yom, so a day that fails is skipped with a warning rather
+    # than losing the whole week.
     if os.path.exists(f"Hayom{session}.pdf"):
         return
     sections = []
-    for i in dor:
-        month, day, year = (int(part) for part in i.split("%2F"))
-        day_date = date(year, month, day)
+    for day in _chabad_dates(dor):
         try:
-            entries = hayomyom_days(day_date)
-            if not entries:
-                raise LookupError(f"no Hayom Yom entry for {day_date}")
-            for entry in entries:
-                content = chabad_torahtexts("book-content", entry["article-id"])
-                paragraphs, notes = [], []
-                for verse in content.get("verses") or []:
-                    for language in ("native", "hebrew"):
-                        html_text = _chabad_text_to_html((verse.get(language) or {}).get("text"), notes)
-                        if html_text.strip():
-                            direction = ' dir="rtl" class="hebrew"' if language == "hebrew" else ""
-                            paragraphs.append(f"<div{direction}>{html_text}</div>")
-                if not paragraphs:
-                    raise LookupError(f"Hayom Yom entry {entry['article-id']} came back empty")
-                title = html_mod.escape(entry.get("native-title") or entry.get("hebrew-title") or "")
-                notes_html = "".join(f"<li>{note}</li>" for note in notes)
-                sections.append(
-                    '<section class="day">'
-                    f'<h2>{title}</h2><div class="date">{day_date.strftime("%A, %B %-d, %Y")}</div>'
-                    + "".join(paragraphs)
-                    + (f'<ol class="notes">{notes_html}</ol>' if notes else "")
-                    + "</section>")
+            sections.append(chabad_texts.hayomyom_section(day))
         except Exception:
-            logger.warning("Hayom Yom fetch failed for %s", day_date, exc_info=True)
-            st.warning(f"Couldn't get Hayom Yom for {day_date.strftime('%A')} from Chabad.org, so that day is not in this PDF.")
-    if not sections:
-        return
-    html = ("<html><head><meta charset='utf-8'><style>"
-            "body { font-family: Georgia, 'Times New Roman', serif; font-size: 15px; line-height: 1.5; }"
-            ".day { break-inside: avoid; margin-bottom: 1.6em; }"
-            "h2 { font-size: 1.25em; margin: 0; } .date { color: #555; margin-bottom: 0.6em; }"
-            ".hebrew { font-family: 'Noto Serif Hebrew', 'Noto Sans Hebrew', serif; font-size: 1.15em; }"
-            ".notes { font-size: 0.85em; color: #333; } .credit { font-size: 0.8em; color: #666; margin-top: 2em; }"
-            "</style></head><body>"
-            + "".join(sections)
-            + '<p class="credit">Hayom Yom, translated by Yitschak Meir Kagan. © Kehot Publication Society. From Chabad.org.</p>'
-            "</body></html>")
-    pdf = render_html_to_pdf(html, pdf_options)
-    with open(f"Hayom{session}.pdf.tmp", "wb") as f:
-        f.write(b64decode(pdf["data"]))
-    os.replace(f"Hayom{session}.pdf.tmp", f"Hayom{session}.pdf")
+            logger.warning("Hayom Yom failed for %s", day, exc_info=True)
+            st.warning(f"Couldn't get Hayom Yom for {day.strftime('%A')} from Chabad.org, so that day is not in this PDF.")
+    if sections:
+        _chabad_pdf("hayomyom", sections, scale3, f"Hayom{session}.pdf")
 
 SEFARIA_API_BASE = "https://www.sefaria.org/api"
 WEEKDAY_TO_NUM = {'Monday': 0, 'Tuesday': 1, 'Wednesday': 2, 'Thursday': 3, 'Friday': 4, 'Shabbos': 5, 'Sunday': 6}
@@ -635,9 +437,13 @@ def sefaria_chumash_get(week, session): # 3rd-tier Chumash+Rashi fallback via Se
     if os.path.exists(f"temp{session}.pdf"):
         os.remove(f"temp{session}.pdf")
 
-def sefaria_tanya_get(week, session): # 3rd-tier Tanya fallback via Sefaria
+def sefaria_tanya_get(week, session, opt=("Tanya",)): # 3rd-tier Tanya fallback via Sefaria
     if os.path.exists(f"Tanya{session}.pdf"):
         return
+    # Sefaria has Kehot's English translation as well. One version is made, covering what
+    # was picked: side by side if both languages are wanted, else one of them.
+    want_en = "Tanya-English" in opt or "Tanya-Bilingual" in opt
+    want_he = "Tanya" in opt or "Tanya-Bilingual" in opt
     pdf_options = {'scale': scale, 'margin-top': '0.1in', 'margin-right': '0.1in',
                    'margin-bottom': '0.1in', 'margin-left': '0.1in'}
     merger = PdfMerger()
@@ -654,13 +460,17 @@ def sefaria_tanya_get(week, session): # 3rd-tier Tanya fallback via Sefaria
             text_data = sefaria_fetch_text(ref)
             if not text_data:
                 continue
-            hebrew_verses = _flatten_sefaria_text(text_data.get("he"))
-            if not hebrew_verses:
+            hebrew_verses = _flatten_sefaria_text(text_data.get("he")) if want_he else []
+            english_verses = _flatten_sefaria_text(text_data.get("text")) if want_en else []
+            if want_he and want_en and (hebrew_verses or english_verses):
+                block = _paired_bilingual_html(hebrew_verses, english_verses)
+            elif hebrew_verses:
+                block = f'<div class="hebrew">{"<br>".join(hebrew_verses)}</div>'
+            elif english_verses:
+                block = f'<div class="english">{"<br>".join(english_verses)}</div>'
+            else:
                 continue
-            html = (
-                _SEFARIA_HTML_HEAD + f"<h1>{ref}</h1>"
-                + f'<div class="hebrew">{"<br>".join(hebrew_verses)}</div>' + _SEFARIA_HTML_END
-            )
+            html = _SEFARIA_HTML_HEAD + f"<h1>{ref}</h1>" + block + _SEFARIA_HTML_END
             pdf = render_html_to_pdf(html, pdf_options)
             with open(f"temp{session}.pdf", "ab") as f:
                 f.write(b64decode(pdf["data"]))
@@ -845,7 +655,7 @@ def opttouse(opt, optconv): #sorts through options from opt to optconv, converti
             optconv.append('מאמרים')
         elif i == 'Shnayim Mikra':
             optconv.append('Shnayim Mikra')
-        elif 'Rambam' in i or 'Hayom Yom' in i:
+        elif 'Rambam' in i or 'Hayom Yom' in i or i in ('Tanya-Bilingual', 'Tanya-English'):
             optconv.append(i)
     return optconv
 
@@ -1260,6 +1070,7 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
     # Rambam{session}.pdf, so without this guard selecting two Chabad-sourced Rambam
     # variants at once inserted the same file twice.
     rambamattached = False
+    tanyaattached = False  # same reason: every Tanya option shares one Tanya{session}.pdf
     if source == True:
         try:
             doc = fitz.open(f"dvar{session2}.pdf")
@@ -1275,9 +1086,9 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
             if 'Chumash' in opt:
                 ensure_material("Chumash", session, lambda: chabadget(dor, opt, session),
                                  lambda: sefaria_chumash_get(week, session))
-            if 'Tanya' in opt:
+            if any(o in opt for o in TANYA_NAMES):
                 ensure_material("Tanya", session, lambda: chabadget(dor, opt, session),
-                                 lambda: sefaria_tanya_get(week, session))
+                                 lambda: sefaria_tanya_get(week, session, opt))
             if rambam_requested:
                 # Closes a latent gap: this inline fallback used to only call chabadget()
                 # and never rambamenglish(), so if Dvar Malchus's file existed but was
@@ -1302,8 +1113,10 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
             for option in opt:
                 if option == 'Chumash':
                     append_material(doc_out, f"Chumash{session}.pdf", "Chumash")
-                elif option == 'Tanya':
-                    append_material(doc_out, f"Tanya{session}.pdf", "Tanya")
+                elif option in TANYA_NAMES:
+                    if not tanyaattached:
+                        append_material(doc_out, f"Tanya{session}.pdf", "Tanya")
+                        tanyaattached = True
                 elif 'Rambam' in option:
                     if not rambamattached:
                         append_material(doc_out, f"Rambam{session}.pdf", "Rambam") #type: ignore
@@ -1399,6 +1212,13 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
                     
                 continue
 
+            if q in ('Tanya-Bilingual', 'Tanya-English'):
+                # The Hebrew Tanya comes from the booklet above; these come from Chabad.org.
+                if not tanyaattached:
+                    append_material(doc_out, f"Tanya{session}.pdf", "Tanya")
+                    tanyaattached = True
+                continue
+
             if q == 'Hayom Yom':
                 append_material(doc_out, f"Hayom{session}.pdf", "Hayom Yom")
                 
@@ -1434,19 +1254,21 @@ with st.form(key="dvarform", clear_on_submit=False): #streamlit form for user in
     week = st.pills("Select which days of the week you would like to print.", options=['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos'], selection_mode="multi", default=None)
     st.write("**Select which materials you would like to print.** (Select as many as you'd like!)")
     #TODO: add tehillim and rename to "Chitas"
-    basics = st.pills('Basics:', options=['Chumash', 'Tanya', 'Hayom Yom'], selection_mode="multi", default=None)
+    basics = st.pills('Basics:', options=['Chumash', 'Hayom Yom'], selection_mode="multi", default=None)
+    tanyaopts = st.pills('Tanya:', options=TANYA_NAMES, selection_mode="multi", default=None,
+                         format_func=lambda o: 'Tanya-Hebrew' if o == 'Tanya' else o)
     rambamopts = st.pills('Rambam:', options=['Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English'], selection_mode="multi", default=None)
     extras = st.pills('MISC:', options=['Project Likutei Sichos (Hebrew)', 'Maamarim', 'Krias Hatorah (includes Haftorah)', 'Haftorah', 'Shnayim Mikra'], selection_mode="multi", default=None)
     source = st.toggle(label='Try to use Dvar Malchus, or get from Chabad.org? If toggled on, it will attempt to get from Dvar Malchus.', value=True)
     with st.expander("Advanced Options"):
         cover = st.checkbox('Include the cover page from Dvar Malchus?', value=False)
-        scaleslide = st.slider('Change the scale of Chumash and Tanya from Chabad.Org. Default is 100%.', 30, 100, 100)
+        scaleslide = st.slider('Change the size of Chumash and Tanya from Chabad.org. Default is 100%.', 30, 100, 100)
         st.write("Scale is", scaleslide,"%")
         scale = scaleslide/100
-        scaleslide2 = st.slider('Change the scale of Rambam from Chabad.Org. Default is 50%.', 30, 100, 50)
+        scaleslide2 = st.slider('Change the size of Rambam from Chabad.org. Default is 100%.', 30, 100, 100)
         st.write("Scale is", scaleslide2,"%")
         scale2 = scaleslide2/100
-        scaleslide3 = st.slider('Change the scale of Hayom Yom from Chabad.Org. Default is 80%.', 30, 100, 80)
+        scaleslide3 = st.slider('Change the size of Hayom Yom. Default is 100%.', 30, 100, 100)
         st.write("Scale is", scaleslide3,"%")
         scale3 = scaleslide3/100
         
@@ -1462,6 +1284,9 @@ if submit_button: #if the user submits the form, run the following code, which w
     if basics:
         logger.info("appending selected basics")
         opt += basics
+    if tanyaopts:
+        logger.info("appending selected tanya")
+        opt += tanyaopts
     if rambamopts:
         logger.info("appending selected rambam")
         opt += rambamopts
@@ -1480,9 +1305,9 @@ if submit_button: #if the user submits the form, run the following code, which w
         except FileNotFoundError:
             pass
     weekorder = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos']
-    optorder = ['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom', 'Project Likutei Sichos (Hebrew)', 'Maamarim', 'Haftorah', 'Krias Hatorah (includes Haftorah)', 'Shnayim Mikra']
-    daydependent = ['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom']
-    chabadoptions = ['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom']
+    optorder = ['Chumash', 'Tanya', 'Tanya-Bilingual', 'Tanya-English', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom', 'Project Likutei Sichos (Hebrew)', 'Maamarim', 'Haftorah', 'Krias Hatorah (includes Haftorah)', 'Shnayim Mikra']
+    daydependent = ['Chumash', 'Tanya', 'Tanya-Bilingual', 'Tanya-English', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom']
+    chabadoptions = ['Chumash', 'Tanya', 'Tanya-Bilingual', 'Tanya-English', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom']
     dow = []
     optconv = []
     dor = []
@@ -1499,7 +1324,7 @@ if submit_button: #if the user submits the form, run the following code, which w
     logger.info(optconv)
     logger.info(source)
     if week == [] and any(x in opt for x in daydependent)==True:
-        st.error("Please select at least one day of the week if trying to select anything from the 'Basics' or 'Rambam' sections.")
+        st.error("Please select at least one day of the week if trying to select anything from the 'Basics', 'Tanya' or 'Rambam' sections.")
         st.stop()
     # Parenthesised so this only fires when no day was picked. Without them it read as
     # "(no days and Kriah) or Maamarim or Sichos or Shnayim", which swapped the user's
@@ -1531,13 +1356,19 @@ if submit_button: #if the user submits the form, run the following code, which w
             if 'Chumash' in opt:
                 ensure_material("Chumash", session, lambda: chabadget(dor, opt, session),
                                  lambda: sefaria_chumash_get(week, session))
-            if 'Tanya' in opt:
+            if any(o in opt for o in TANYA_NAMES):
                 ensure_material("Tanya", session, lambda: chabadget(dor, opt, session),
-                                 lambda: sefaria_tanya_get(week, session))
+                                 lambda: sefaria_tanya_get(week, session, opt))
             if rambam_requested:
                 ensure_material("Rambam", session, lambda: rambamenglish(dor, session, opt),
                                  lambda: sefaria_rambam_get(week, session, opt))
         if source == True:
+            if 'Tanya-Bilingual' in opt or 'Tanya-English' in opt:
+                # As with Rambam below: the Hebrew Tanya comes from the booklet, so only the
+                # English and Bilingual versions are fetched from Chabad.org.
+                chabad_tanya_opt = [o for o in opt if o in ('Tanya-Bilingual', 'Tanya-English')]
+                ensure_material("Tanya", session, lambda: chabadget(dor, chabad_tanya_opt, session),
+                                 lambda: sefaria_tanya_get(week, session, chabad_tanya_opt))
             if 'Rambam (3)-Bilingual' in opt or 'Rambam (3)-English' in opt or 'Rambam (1)-Bilingual' in opt or 'Rambam (1)-English' in opt:
                 # The Hebrew Rambam comes from the booklet here, so leave it out of what
                 # Chabad.org is asked for. rambamenglish() takes the first Rambam option it
@@ -1594,7 +1425,7 @@ st.markdown("**Any major bugs noticed? Features that you'd like to see? Comments
 
 if not submit_button:
     with st.expander("**Changelog:**"):
-        st.markdown("**New in latest update (11-5-26)**: <br/> **[FIX]** Rambam in Hebrew (3 chapters and 1 chapter) was missing from PDFs made from Dvar Malchus for the last few weeks, because the booklet changed how it writes רמב״ם in its titles. It is back. <br/> **[FIX]** Chumash and Tanya no longer fall back to estimated page ranges when a day starts at the very top of a page, or when the booklet's Tanya bookmark points to the wrong page. This week that had added most of Tanya to the end of Chumash for Shabbos. <br/> **[NEW]** If a section you picked can't be found in this week's Dvar Malchus, the app now tells you, instead of quietly leaving it out. <br/> **[FIX]** Maamarim are back. For most weeks since the summer the booklet has titled that section מאמרים instead of מאמר, so the app found nothing and left them out of the PDF. <br/> **[FIX]** The Haftorah no longer prints twice. In some weeks, this one included, it came out twice. <br/> **[FIX]** Krias Hatorah now ends on the right page. Some weeks it cut off the last page of the Haftorah or added a page of the Shabbos Mincha reading. <br/> **[FIX]** Shnayim Mikra no longer crashes the app in weeks when Shabbos is Yom Tov, and it now works for אחרי מות-קדושים and נצבים-וילך. <br/> **[FIX]** Making a second PDF in the same tab with different days or options no longer reuses the Chumash, Tanya, Rambam or Hayom Yom from the first one. <br/> **[FIX]** Picking a Hebrew Rambam together with an English or Bilingual one now gives you both, instead of the Hebrew twice. <br/> **[NEW]** If Likutei Sichos, Krias Hatorah, the Haftorah or Shnayim Mikra can't be found, or you pick something that only comes from Dvar Malchus while it isn't being used, the app now tells you. <br/> **[FIX]** Hayom Yom is back. Chabad.org's daily study pages had started blocking the app, so Hayom Yom was missing from every PDF. It now comes from Chabad.org's online library instead (same English translation), takes about a second, and prints the days one after another instead of one per page. <br/> **[FIX]** When Chabad.org can't be reached, PDFs are much faster: the app stops retrying it after the first failure and goes straight to Sefaria.", unsafe_allow_html=True)
+        st.markdown("**New in latest update (11-5-26)**: <br/> **[FIX]** Rambam in Hebrew (3 chapters and 1 chapter) was missing from PDFs made from Dvar Malchus for the last few weeks, because the booklet changed how it writes רמב״ם in its titles. It is back. <br/> **[FIX]** Chumash and Tanya no longer fall back to estimated page ranges when a day starts at the very top of a page, or when the booklet's Tanya bookmark points to the wrong page. This week that had added most of Tanya to the end of Chumash for Shabbos. <br/> **[NEW]** If a section you picked can't be found in this week's Dvar Malchus, the app now tells you, instead of quietly leaving it out. <br/> **[FIX]** Maamarim are back. For most weeks since the summer the booklet has titled that section מאמרים instead of מאמר, so the app found nothing and left them out of the PDF. <br/> **[FIX]** The Haftorah no longer prints twice. In some weeks, this one included, it came out twice. <br/> **[FIX]** Krias Hatorah now ends on the right page. Some weeks it cut off the last page of the Haftorah or added a page of the Shabbos Mincha reading. <br/> **[FIX]** Shnayim Mikra no longer crashes the app in weeks when Shabbos is Yom Tov, and it now works for אחרי מות-קדושים and נצבים-וילך. <br/> **[FIX]** Making a second PDF in the same tab with different days or options no longer reuses the Chumash, Tanya, Rambam or Hayom Yom from the first one. <br/> **[FIX]** Picking a Hebrew Rambam together with an English or Bilingual one now gives you both, instead of the Hebrew twice. <br/> **[NEW]** If Likutei Sichos, Krias Hatorah, the Haftorah or Shnayim Mikra can't be found, or you pick something that only comes from Dvar Malchus while it isn't being used, the app now tells you. <br/> **[NEW]** Chumash with Rashi, Tanya, Rambam and Hayom Yom from Chabad.org are back, in a new print layout: Hebrew with full cantillation, Bilingual Rambam side by side, and a header on each day with the English and Hebrew date and the portion. Chabad.org's daily study pages had started blocking the app, so these were coming from Sefaria instead, and Hayom Yom, which only Chabad.org has, was missing from every PDF. They now come from Chabad.org's online library and take a second or two instead of minutes. <br/> **[NEW]** Tanya now has its own row, like Rambam: Hebrew, Bilingual (side by side) and English. The English is Lessons in Tanya, with its explanation printed in gray so the translation stands out. <br/> **[NEW]** Chumash from Chabad.org prints each pasuk with its Rashi right under it, in block letters. <br/> **[CHANGE]** English and Bilingual Rambam leave out the translator's footnotes, which more than doubled the length of a day's printout. <br/> **[NEW]** You can now pick more than one Rambam option from Chabad.org; each is included. Before, only the first one came through. <br/> **[CHANGE]** The size sliders under Advanced Options now default to 100% for everything, since the new layout is already sized for print.", unsafe_allow_html=True)
         st.markdown("**Past Changes (7-19-26)**: <br/> **[FIX]** Days taken from Dvar Malchus now include their full shiur. Because a day's learning ends partway down a page rather than at a page break, the app used to cut some days short or add a page of the next day — Tanya was losing the end of most days every week. Day boundaries are now found on the page itself instead of being estimated. <br/> **[NEW]** Rambam (1 chapter) in Hebrew now comes from Dvar Malchus like the 3-chapter cycle, instead of always falling back to Chabad.org. <br/> **[FIX]** Selecting more than one Rambam option at once no longer repeats the same section twice. <br/> **[NEW]** Dvar Malchus downloads are much faster (a couple of seconds instead of around forty) — the app now fetches the booklet directly rather than driving a browser, falling back to the old method if needed.", unsafe_allow_html=True)
         st.markdown("**Past Changes (7-3-26)**: <br/> **[FIX]** Fixed a crash when two people generated a booklet from Dvar Malchus at nearly the same time. <br/> **[NEW]** Modernized the app's dependencies (Streamlit and others) and swapped out a few unmaintained UI components for Streamlit's own native ones. <br/> **[NEW]** Added a custom dark theme. <br/> **[NEW]** Chumash/Tanya/Rambam/Hayom Yom fetches are now shared across everyone requesting the same day, so repeat generations are faster and put less load on Chabad.org.", unsafe_allow_html=True)
         st.markdown("**Past Changes (7-2-26)**: <br/> **[FIX]** Dvar Malchus downloads were silently failing in headless mode; fixed by explicitly allowing Chrome to save the file. <br/> **[FIX]** Chabad.org's daily study pages had started intermittently failing (an anti-bot check); fetches now retry automatically with a fresh session before giving up. <br/> **[NEW]** Added Sefaria as a 3rd fallback source for Chumash (with Rashi), Tanya, and Rambam if both Dvar Malchus and Chabad.org are unavailable, including correct handling of combined/double-parsha weeks. <br/> **[FIX]** Bilingual Rambam now shows Hebrew and English side by side instead of one after the other. <br/> **[FIX]** A single Chabad.org or Sefaria hiccup on one material no longer crashes the whole app.", unsafe_allow_html=True)
