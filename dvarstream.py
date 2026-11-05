@@ -22,7 +22,17 @@ import pypdf as PyPDF2 #type: ignore
 from pypdf import PdfWriter as PdfMerger #type: ignore
 import glob
 from pyluach import parshios, dates
+import importlib
 import chabad_texts
+# Streamlit Cloud re-reads this script after a deploy but keeps modules it has already
+# imported, so a deploy that changed chabad_texts.py went on running the old copy next to the
+# new dvarstream.py. On Nov 5 2026 that made every Chumash from Chabad.org fail (the old
+# chumash_section() took no column setting) and fall back to Sefaria without a word, and
+# Bilingual Hayom Yom fail outright (the old module lacked its functions). Reload the module
+# whenever its file is newer than the copy in memory.
+if getattr(chabad_texts, "_loaded_mtime", None) != os.path.getmtime(chabad_texts.__file__):
+    chabad_texts = importlib.reload(chabad_texts)
+    chabad_texts._loaded_mtime = os.path.getmtime(chabad_texts.__file__)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("dvarstream"); append_material = lambda doc_out, path, label: doc_out.insert_pdf(fitz.open(path)) if os.path.exists(path) else logger.warning("Skipping %s: %s was not created (all fetch tiers failed).", label, path)
@@ -1235,6 +1245,11 @@ def ensure_material(name, session, chabad_fetch, sefaria_fetch):
         return
     logger.info("%s not available from Chabad.org, trying Sefaria...", name)
     sefaria_fetch()
+    # Say so: a silent fallback looks like a layout bug, and hid a real failure for a while.
+    if os.path.exists(f"{name}{session}.pdf"):
+        st.info(f"Chabad.org didn't work for {name} this time, so it comes from Sefaria, in a simpler layout.")
+    else:
+        st.warning(f"Couldn't get {name} from Chabad.org or Sefaria, so it is not in this PDF.")
 
 def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collecting all the necessary files
     output_dir = ""
