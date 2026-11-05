@@ -12,14 +12,12 @@ import html as html_mod #type: ignore
 from urllib.parse import urljoin
 import fitz as fitz #type: ignore
 from base64 import b64decode, b64encode
-from dateutil.relativedelta import relativedelta #type: ignore
 from datetime import date #type: ignore
 from datetime import datetime as dt #type: ignore
 from datetime import timedelta #type: ignore
 import requests #type: ignore
 import streamlit as st #type: ignore
 import pypdf as PyPDF2 #type: ignore
-from pypdf import PdfWriter as PdfMerger #type: ignore
 import glob
 from pyluach import parshios, dates
 import importlib
@@ -35,7 +33,7 @@ if getattr(chabad_texts, "_loaded_mtime", None) != os.path.getmtime(chabad_texts
     chabad_texts._loaded_mtime = os.path.getmtime(chabad_texts.__file__)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("dvarstream"); append_material = lambda doc_out, path, label: doc_out.insert_pdf(fitz.open(path)) if os.path.exists(path) else logger.warning("Skipping %s: %s was not created (all fetch tiers failed).", label, path)
+logger = logging.getLogger("dvarstream")
 
 st.set_page_config(page_title="Dvar Creator (BETA)", page_icon="📚", layout="wide", initial_sidebar_state="collapsed")
 # On a phone the four Text size choices were 9px too wide for one line; tighten their padding
@@ -60,13 +58,16 @@ options.add_experimental_option('prefs', {
 chrome_driver_path = "/usr/bin/chromedriver"
 service = Service(chrome_driver_path)
 
-# Guards the shared, cross-user cache files (dvar{session2}.pdf, Shnayim{session2}.pdf)
-# so two concurrent Streamlit sessions in the same process can't both start a redundant
-# download and race each other writing the same filename.
-_dvar_cache_lock = threading.Lock()
-_shnayim_cache_lock = threading.Lock()
+# Guards the shared, cross-user booklet file (dvar{session2}.pdf) so two concurrent Streamlit
+# sessions in the same process can't both start a redundant download and race each other
+# writing the same filename. Kept in st.cache_resource: a plain module-level Lock was made anew
+# on every run of this script, so each session had its own and nothing was guarded.
+@st.cache_resource
+def _booklet_lock():
+    return threading.Lock()
+_dvar_cache_lock = _booklet_lock()
 
-@st.cache_data(ttl="24h", show_spinner=False)
+@st.cache_data(ttl="24h", max_entries=60, show_spinner=False)
 def render_html_to_pdf(html, pdf_options):
     # Shared by the Sefaria-sourced builders below: renders a locally-authored HTML string
     # (rather than a scraped page) through the same headless-Chrome print-to-PDF pipeline
@@ -238,12 +239,11 @@ def _dvarget_locked(session2):
         driver.quit()
 
 # Chumash, Tanya, Rambam and Hayom Yom from Chabad.org. chabad_texts.py fetches each day's
-# text from Chabad.org's Torah Texts API and lays it out for print; these wrappers render it
-# and write the per-tab files the rest of the app expects. If Chabad.org fails for any day
-# of Chumash, Tanya or Rambam, no file is written, so ensure_material() falls back to
-# Sefaria for the whole material instead of mixing sources.
-# 'Chumash' and 'Tanya' are the Hebrew (and come from the Dvar Malchus booklet when that's
-# in use); the Bilingual (and English) versions always come from Chabad.org.
+# text from Chabad.org's Torah Texts API and lays it out for print. The PDF is put together
+# one option and one day at a time (see PdfBuilder below), so a day Chabad.org can't supply
+# falls back to Sefaria, or for Hayom Yom is left out, without taking the other days with it.
+# 'Chumash' and 'Tanya' are the Hebrew, and come from the Dvar Malchus booklet for the
+# booklet's own week when that's in use; Bilingual and English always come from Chabad.org.
 CHABAD_CHUMASH_OPTIONS = [("Chumash", "he"), ("Chumash-Bilingual", "both")]
 CHUMASH_NAMES = [name for name, _ in CHABAD_CHUMASH_OPTIONS]
 CHABAD_TANYA_OPTIONS = [("Tanya", "he"), ("Tanya-Bilingual", "both"), ("Tanya-English", "en")]
@@ -265,118 +265,60 @@ def language_label(option):
 
 CHABAD_RAMBAM_OPTIONS = [("Rambam (3)-Hebrew", 3, "he"), ("Rambam (3)-Bilingual", 3, "both"), ("Rambam (3)-English", 3, "en"),
                          ("Rambam (1)-Hebrew", 1, "he"), ("Rambam (1)-Bilingual", 1, "both"), ("Rambam (1)-English", 1, "en")]
+RAMBAM_NAMES = [name for name, _, _ in CHABAD_RAMBAM_OPTIONS]
+OPTION_LANGUAGE = {**dict(CHABAD_CHUMASH_OPTIONS), **dict(CHABAD_TANYA_OPTIONS),
+                   **{name: language for name, _, language in CHABAD_RAMBAM_OPTIONS}}
 
-def _chabad_dates(dor):
-    # dor holds 'MM%2FDD%2FYYYY' strings (see daytorambam()).
-    return [date(int(y), int(m), int(d)) for m, d, y in (i.split("%2F") for i in dor)]
+def weekday_index(day):
+    return (day.weekday() + 1) % 7  # Sunday 0 ... Shabbos 6, the booklet's order
 
-def _chabad_pdf(material, sections, scale_value, path):
-    pdf = render_html_to_pdf(chabad_texts.page(material, sections),
-                             {"scale": scale_value, "printBackground": True, "preferCSSPageSize": True})
-    with open(f"{path}.tmp", "wb") as f:
-        f.write(b64decode(pdf["data"]))
-    os.replace(f"{path}.tmp", path)
+def option_material(option):
+    """The chabad_texts.page() layout an option prints in, which is also the size slider it
+    follows; None for the weekly items."""
+    if option in CHUMASH_NAMES:
+        return "chumash"
+    if option in TANYA_NAMES:
+        return "tanya"
+    if option in RAMBAM_NAMES:
+        return "rambam"
+    if option in HAYOM_YOM_NAMES:
+        return "hayomyom"
+    return None
 
-def chabadget(dor, opt, session): # Chumash and Tanya from chabad.org
-    # Every Chumash or Tanya option picked (Hebrew, Bilingual, English) goes into that
-    # material's one file.
-    builds = [("Chumash", "chumash", scale, [(lambda language: lambda day: chabad_texts.chumash_section(day, language, chumash_columns))(language)
-                                             for name, language in CHABAD_CHUMASH_OPTIONS if name in opt]),
-              ("Tanya", "tanya", scale4, [(lambda language: lambda day: chabad_texts.tanya_section(day, language))(language)
-                                  for name, language in CHABAD_TANYA_OPTIONS if name in opt])]
-    for name, material, size, variants in builds:
-        if not variants or os.path.exists(f"{name}{session}.pdf"):
-            continue
-        try:
-            sections = [build(day) for build in variants for day in _chabad_dates(dor)]
-        except Exception:
-            logger.warning("Chabad.org %s failed; leaving it to the fallback", name, exc_info=True)
-            continue
-        _chabad_pdf(material, sections, size, f"{name}{session}.pdf")
+def option_title(option):
+    if option in CHUMASH_NAMES:
+        base = "Chumash with Rashi"
+    elif option in TANYA_NAMES:
+        base = "Tanya"
+    elif option in HAYOM_YOM_NAMES:
+        base = "Hayom Yom"
+    elif option in RAMBAM_NAMES:
+        base = "Rambam · 3 chapters" if option.startswith("Rambam (3)") else "Rambam · 1 chapter"
+    else:
+        return WEEKLY_LABELS.get(option, option)
+    return f"{base} · {language_label(option)}"
 
-def rambamenglish(dor, session, opt): # all Rambam versions from chabad.org
-    # Every Rambam option picked is included, one after another. This used to fetch only
-    # the first one, because each needed its own Chabad.org page.
-    if os.path.exists(f"Rambam{session}.pdf"):
-        return
-    try:
-        sections = [chabad_texts.rambam_section(day, chapters, language)
-                    for option, chapters, language in CHABAD_RAMBAM_OPTIONS if option in opt
-                    for day in _chabad_dates(dor)]
-    except Exception:
-        logger.warning("Chabad.org Rambam failed; leaving it to the fallback", exc_info=True)
-        return
-    if sections:
-        _chabad_pdf("rambam", sections, scale2, f"Rambam{session}.pdf")
+def chabad_section(option, day, chumash_columns):
+    """One day of one option from Chabad.org, as HTML for chabad_texts.page(). Raises when
+    Chabad.org can't supply it."""
+    if option in CHUMASH_NAMES:
+        return chabad_texts.chumash_section(day, OPTION_LANGUAGE[option], chumash_columns)
+    if option in TANYA_NAMES:
+        return chabad_texts.tanya_section(day, OPTION_LANGUAGE[option])
+    if option == "Hayom Yom":
+        return chabad_texts.hayomyom_section(day)
+    for name, chapters, language in CHABAD_RAMBAM_OPTIONS:
+        if name == option:
+            return chabad_texts.rambam_section(day, chapters, language)
+    raise ValueError(f"{option} doesn't come from Chabad.org")
 
-def hayomyom(dor, dow, session, opt, source): # Hayom Yom: Hebrew from the booklet, English from chabad.org
-    # Hebrew is the booklet's own pages, as for the other Hebrew materials; a page can carry
-    # the neighbouring days too. Bilingual pairs the booklet's Hebrew text with Chabad.org's
-    # English, and English comes from Chabad.org. No other source has Hayom Yom, so a day that
-    # fails is skipped with a warning rather than losing the whole week. Everything picked
-    # goes into the one Hayom Yom file, in that order.
-    if os.path.exists(f"Hayom{session}.pdf"):
-        return
-    booklet_pages, sections = [], []
-    if "Hayom Yom-Hebrew" in opt or "Hayom Yom-Bilingual" in opt:
-        days = None
-        if source and os.path.exists(f"dvar{session2}.pdf"):
-            try:
-                with fitz.open(f"dvar{session2}.pdf") as booklet:
-                    days = booklet_hayomyom(booklet, booklet.get_toc())
-            except Exception:
-                logger.warning("Couldn't read Hayom Yom from the booklet", exc_info=True)
-        if not days:
-            st.warning("Hebrew Hayom Yom comes from this week's Dvar Malchus, which wasn't used for this PDF, so the Hebrew "
-                       "and Bilingual Hayom Yom are not in it. To include them, turn on 'Use Dvar Malchus when possible'.")
-        else:
-            by_weekday = {found["weekday"]: found for found in days}
-            missing = [weekday for weekday in dow if weekday not in by_weekday]
-            if missing:
-                st.warning(f"Couldn't find Hayom Yom for {', '.join(missing)} in this week's Dvar Malchus, so those days are not in this PDF.")
-            if "Hayom Yom-Hebrew" in opt:
-                booklet_pages = sorted({page for weekday in dow if weekday in by_weekday for page in by_weekday[weekday]["pages"]})
-            if "Hayom Yom-Bilingual" in opt:
-                try:
-                    week_dates = chabad_texts.booklet_week_dates(days, date.today())
-                except Exception:
-                    logger.warning("Couldn't date the booklet's Hayom Yom", exc_info=True)
-                    week_dates = {}
-                for weekday in dow:
-                    if weekday not in by_weekday:
-                        continue
-                    try:
-                        sections.append(chabad_texts.hayomyom_booklet_section(week_dates[weekday], by_weekday[weekday]["entries"], "both"))
-                    except Exception:
-                        logger.warning("Bilingual Hayom Yom failed for %s", weekday, exc_info=True)
-                        st.warning(f"Couldn't build Bilingual Hayom Yom for {weekday}, so that day is not in this PDF.")
-    if "Hayom Yom" in opt:
-        for day in _chabad_dates(dor):
-            try:
-                sections.append(chabad_texts.hayomyom_section(day))
-            except Exception:
-                logger.warning("Hayom Yom failed for %s", day, exc_info=True)
-                st.warning(f"Couldn't get Hayom Yom for {day.strftime('%A')} from Chabad.org, so that day is not in this PDF.")
-    if not booklet_pages and not sections:
-        return
-    out = fitz.open()
-    if booklet_pages:
-        with fitz.open(f"dvar{session2}.pdf") as booklet:
-            for page in booklet_pages:
-                out.insert_pdf(booklet, from_page=page, to_page=page)
-    if sections:
-        pdf = render_html_to_pdf(chabad_texts.page("hayomyom", sections),
-                                 {"scale": scale3, "printBackground": True, "preferCSSPageSize": True})
-        with fitz.open(stream=b64decode(pdf["data"]), filetype="pdf") as rendered:
-            out.insert_pdf(rendered)
-    out.save(f"Hayom{session}.pdf.tmp")
-    out.close()
-    os.replace(f"Hayom{session}.pdf.tmp", f"Hayom{session}.pdf")
+SEFARIA_PDF_MARGINS = {'margin-top': '0.1in', 'margin-right': '0.1in', 'margin-bottom': '0.1in', 'margin-left': '0.1in'}
+
+def render_pdf_bytes(html, size, sefaria=False):
+    options = {"scale": size, **SEFARIA_PDF_MARGINS} if sefaria else {"scale": size, "printBackground": True, "preferCSSPageSize": True}
+    return b64decode(render_html_to_pdf(html, options)["data"])
 
 SEFARIA_API_BASE = "https://www.sefaria.org/api"
-WEEKDAY_TO_NUM = {'Monday': 0, 'Tuesday': 1, 'Wednesday': 2, 'Thursday': 3, 'Friday': 4, 'Shabbos': 5, 'Sunday': 6}
-ALIYAH_WEEKDAY_ORDER = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos']
-
 _SEFARIA_HTML_HEAD = """<html><head><meta charset="utf-8"><style>
 body { font-family: 'Noto Sans Hebrew', 'David', 'Times New Roman', serif; direction: rtl; padding: 2em; }
 .hebrew { font-size: 1.3em; line-height: 1.8; margin-bottom: 1.2em; }
@@ -388,6 +330,7 @@ body { font-family: 'Noto Sans Hebrew', 'David', 'Times New Roman', serif; direc
 .rashi-title { font-weight: bold; margin-bottom: 0.4em; }
 .rashi.english { direction: ltr; text-align: left; border-right: none; border-left: 3px solid #999; padding-right: 0; padding-left: 1.5em; }
 h1 { text-align: center; font-size: 1.4em; }
+.sefaria-day + .sefaria-day { break-before: page; }
 </style></head><body>
 """
 _SEFARIA_HTML_END = "</body></html>"
@@ -471,177 +414,57 @@ def sefaria_fetch_rashi(ref, language="he"):
         comments.append(text if isinstance(text, str) else " ".join(_flatten_sefaria_text(text)))
     return comments
 
-def sefaria_chumash_get(week, session, opt=("Chumash",)): # 3rd-tier Chumash+Rashi fallback via Sefaria
-    if os.path.exists(f"Chumash{session}.pdf"):
-        return
-    # One version covering what was picked, as for Tanya: both languages if both are wanted.
-    want_en = "Chumash-Bilingual" in opt
-    want_he = True
-    pdf_options = {'scale': scale, 'margin-top': '0.1in', 'margin-right': '0.1in',
-                   'margin-bottom': '0.1in', 'margin-left': '0.1in'}
-    merger = PdfMerger()
-    appended_any = False
-    for weekday_name in week:
-        try:
-            day_date = date.today() + relativedelta(weekday=WEEKDAY_TO_NUM[weekday_name])
-            calendar_items = sefaria_calendar(day_date.strftime("%Y-%m-%d"))
-            parsha_item = next((i for i in calendar_items if i.get("title", {}).get("en") == "Parashat Hashavua"), None)
-            aliyot = ((parsha_item or {}).get("extraDetails") or {}).get("aliyot", [])
-            aliyah_index = ALIYAH_WEEKDAY_ORDER.index(weekday_name)
-            if len(aliyot) <= aliyah_index:
-                logger.warning("No Sefaria aliyah data for %s on %s", weekday_name, day_date)
-                continue
-            ref = aliyot[aliyah_index]
-            text_data = sefaria_fetch_text(ref)
-            if not text_data:
-                continue
-            hebrew_verses = _flatten_sefaria_text(text_data.get("he")) if want_he else []
-            english_verses = _flatten_sefaria_text(text_data.get("text")) if want_en else []
-            if not hebrew_verses and not english_verses:
-                continue
-            if want_he and want_en:
-                verses_html = _paired_bilingual_html(hebrew_verses, english_verses)
-            elif hebrew_verses:
-                verses_html = f'<div class="hebrew">{"<br>".join(hebrew_verses)}</div>'
-            else:
-                verses_html = f'<div class="english">{"<br>".join(english_verses)}</div>'
-            rashi_html = ""
-            for language, title, css in (("he", 'רש"י', "rashi"), ("en", "Rashi", "rashi english")):
-                if not (want_he if language == "he" else want_en):
-                    continue
-                rashi_comments = sefaria_fetch_rashi(ref, language)
-                if rashi_comments:
-                    rashi_html += (f'<div class="{css}"><div class="rashi-title">{title}</div>'
-                                   + "<br><br>".join(rashi_comments) + "</div>")
-            html = _SEFARIA_HTML_HEAD + f"<h1>{ref}</h1>" + verses_html + rashi_html + _SEFARIA_HTML_END
-            pdf = render_html_to_pdf(html, pdf_options)
-            with open(f"temp{session}.pdf", "ab") as f:
-                f.write(b64decode(pdf["data"]))
-            merger.append(f"temp{session}.pdf")
-            appended_any = True
-        except Exception:
-            logger.warning("Sefaria Chumash fetch failed for %s", weekday_name, exc_info=True)
-            continue
-    if appended_any:
-        merger.write(f"Chumash{session}.pdf")
-    merger.close()
-    if os.path.exists(f"temp{session}.pdf"):
-        os.remove(f"temp{session}.pdf")
+def _sefaria_block(hebrew_verses, english_verses):
+    if hebrew_verses and english_verses:
+        return _paired_bilingual_html(hebrew_verses, english_verses)
+    if hebrew_verses:
+        return f'<div class="hebrew">{"<br>".join(hebrew_verses)}</div>'
+    if english_verses:
+        return f'<div class="english">{"<br>".join(english_verses)}</div>'
+    return ""
 
-def sefaria_tanya_get(week, session, opt=("Tanya",)): # 3rd-tier Tanya fallback via Sefaria
-    if os.path.exists(f"Tanya{session}.pdf"):
-        return
-    # Sefaria has Kehot's English translation as well. One version is made, covering what
-    # was picked: side by side if both languages are wanted, else one of them.
-    want_en = "Tanya-English" in opt or "Tanya-Bilingual" in opt
-    want_he = "Tanya" in opt or "Tanya-Bilingual" in opt
-    pdf_options = {'scale': scale4, 'margin-top': '0.1in', 'margin-right': '0.1in',
-                   'margin-bottom': '0.1in', 'margin-left': '0.1in'}
-    merger = PdfMerger()
-    appended_any = False
-    for weekday_name in week:
-        try:
-            day_date = date.today() + relativedelta(weekday=WEEKDAY_TO_NUM[weekday_name])
-            calendar_items = sefaria_calendar(day_date.strftime("%Y-%m-%d"))
-            tanya_item = next((i for i in calendar_items if i.get("title", {}).get("en") == "Tanya Yomi"), None)
-            if not tanya_item:
-                logger.warning("No Sefaria Tanya Yomi entry for %s", day_date)
-                continue
-            ref = tanya_item["ref"]
-            text_data = sefaria_fetch_text(ref)
-            if not text_data:
-                continue
-            hebrew_verses = _flatten_sefaria_text(text_data.get("he")) if want_he else []
-            english_verses = _flatten_sefaria_text(text_data.get("text")) if want_en else []
-            if want_he and want_en and (hebrew_verses or english_verses):
-                block = _paired_bilingual_html(hebrew_verses, english_verses)
-            elif hebrew_verses:
-                block = f'<div class="hebrew">{"<br>".join(hebrew_verses)}</div>'
-            elif english_verses:
-                block = f'<div class="english">{"<br>".join(english_verses)}</div>'
-            else:
-                continue
-            html = _SEFARIA_HTML_HEAD + f"<h1>{ref}</h1>" + block + _SEFARIA_HTML_END
-            pdf = render_html_to_pdf(html, pdf_options)
-            with open(f"temp{session}.pdf", "ab") as f:
-                f.write(b64decode(pdf["data"]))
-            merger.append(f"temp{session}.pdf")
-            appended_any = True
-        except Exception:
-            logger.warning("Sefaria Tanya fetch failed for %s", weekday_name, exc_info=True)
-            continue
-    if appended_any:
-        merger.write(f"Tanya{session}.pdf")
-    merger.close()
-    if os.path.exists(f"temp{session}.pdf"):
-        os.remove(f"temp{session}.pdf")
+def _sefaria_calendar_items(day, title):
+    return [item for item in sefaria_calendar(day.strftime("%Y-%m-%d")) if item.get("title", {}).get("en") == title]
 
-def sefaria_rambam_get(week, session, opt): # 3rd-tier Rambam fallback via Sefaria
-    if os.path.exists(f"Rambam{session}.pdf"):
-        return
-    pdf_options = {'scale': scale2, 'margin-top': '0.1in', 'margin-right': '0.1in',
-                   'margin-bottom': '0.1in', 'margin-left': '0.1in'}
-    three_chapters = any(o in opt for o in ["Rambam (3)-Bilingual", "Rambam (3)-Hebrew", "Rambam (3)-English"])
-    calendar_title = "Daily Rambam (3 Chapters)" if three_chapters else "Daily Rambam"
-    lang_both = any(o in opt for o in ["Rambam (3)-Bilingual", "Rambam (1)-Bilingual"])
-    lang_en_only = any(o in opt for o in ["Rambam (3)-English", "Rambam (1)-English"])
-    merger = PdfMerger()
-    appended_any = False
-    for weekday_name in week:
-        try:
-            day_date = date.today() + relativedelta(weekday=WEEKDAY_TO_NUM[weekday_name])
-            calendar_items = sefaria_calendar(day_date.strftime("%Y-%m-%d"))
-            # The 3-chapter cycle can appear as two calendar entries on days where it
-            # crosses a Mishneh Torah sub-book boundary -- include every match.
-            rambam_items = [i for i in calendar_items if i.get("title", {}).get("en") == calendar_title]
-            if not rambam_items:
-                logger.warning("No Sefaria '%s' entry for %s", calendar_title, day_date)
-                continue
-            title_parts = []
-            sections_html = []
-            for item in rambam_items:
-                ref = item["ref"]
-                title_parts.append(ref)
-                text_data = sefaria_fetch_text(ref)
-                if not text_data:
-                    continue
-                hebrew_verses = _flatten_sefaria_text(text_data.get("he")) if not lang_en_only else []
-                english_verses = _flatten_sefaria_text(text_data.get("text")) if (lang_both or lang_en_only) else []
-                block = ""
-                if lang_both and (hebrew_verses or english_verses):
-                    block = _paired_bilingual_html(hebrew_verses, english_verses)
-                elif hebrew_verses:
-                    block = f'<div class="hebrew">{"<br>".join(hebrew_verses)}</div>'
-                elif english_verses:
-                    block = f'<div class="english">{"<br>".join(english_verses)}</div>'
-                if block:
-                    sections_html.append(block)
-            if not sections_html:
-                continue
-            html = (
-                _SEFARIA_HTML_HEAD + f"<h1>{' / '.join(title_parts)}</h1>"
-                + "<hr>".join(sections_html) + _SEFARIA_HTML_END
-            )
-            pdf = render_html_to_pdf(html, pdf_options)
-            with open(f"temp{session}.pdf", "ab") as f:
-                f.write(b64decode(pdf["data"]))
-            merger.append(f"temp{session}.pdf")
-            appended_any = True
-        except Exception:
-            logger.warning("Sefaria Rambam fetch failed for %s", weekday_name, exc_info=True)
-            continue
-    if appended_any:
-        merger.write(f"Rambam{session}.pdf")
-    merger.close()
-    if os.path.exists(f"temp{session}.pdf"):
-        os.remove(f"temp{session}.pdf")
+def sefaria_day_html(option, day):
+    """One day of a Chumash, Tanya or Rambam option from Sefaria, the 3rd-tier fallback: a
+    heading and the text, for one page of a Sefaria printout. None when Sefaria has nothing for
+    that day. The option's language decides Hebrew, English or both side by side."""
+    language = OPTION_LANGUAGE[option]
+    want_he, want_en = language in ("he", "both"), language in ("en", "both")
 
-def parshaget(date1): #get parsha from date for shnayim mikra
-    year, date, month = date1.split(", ")
-    year, date, month = int(year), int(date), int(month)
-    parsha = parshios.getparsha_string(dates.GregorianDate(year, date, month), israel=False, hebrew=True)
-    st.write(f"This week's parsha is {parsha}.")
-    return parsha
+    def texts(ref):
+        data = sefaria_fetch_text(ref) or {}
+        return (_flatten_sefaria_text(data.get("he")) if want_he else [],
+                _flatten_sefaria_text(data.get("text")) if want_en else [])
+
+    if option in CHUMASH_NAMES:
+        # Sefaria's calendar gives every date the aliyos of the coming Shabbos's parsha,
+        # combined weeks included, so the date's own weekday picks its aliyah.
+        parsha = next(iter(_sefaria_calendar_items(day, "Parashat Hashavua")), None)
+        aliyot = ((parsha or {}).get("extraDetails") or {}).get("aliyot", [])
+        if len(aliyot) <= weekday_index(day):
+            logger.warning("No Sefaria aliyah for %s", day)
+            return None
+        refs = [aliyot[weekday_index(day)]]
+        body = _sefaria_block(*texts(refs[0]))
+        for wanted, rashi_language, title, css in ((want_he, "he", 'רש"י', "rashi"), (want_en, "en", "Rashi", "rashi english")):
+            comments = sefaria_fetch_rashi(refs[0], rashi_language) if wanted else []
+            if comments:
+                body += f'<div class="{css}"><div class="rashi-title">{title}</div>' + "<br><br>".join(comments) + "</div>"
+    else:
+        if option in TANYA_NAMES:
+            calendar_title = "Tanya Yomi"
+        else:
+            calendar_title = "Daily Rambam (3 Chapters)" if option.startswith("Rambam (3)") else "Daily Rambam"
+        # The 3-chapter cycle can appear as two calendar entries on days where it crosses a
+        # Mishneh Torah sub-book boundary -- include every match.
+        refs = [item["ref"] for item in _sefaria_calendar_items(day, calendar_title)]
+        body = "<hr>".join(block for block in (_sefaria_block(*texts(ref)) for ref in refs) if block)
+    if not body:
+        logger.warning("Sefaria had nothing for %s on %s", option, day)
+        return None
+    return f'<div class="sefaria-day"><h1>{" / ".join(refs)}</h1>{body}</div>'
 
 SHNAYIM_REPO_RAW_BASE = "https://raw.githubusercontent.com/emkay5771/shnayimfiles/master"
 # Weeks where the shnayimfiles repo spells the file differently from pyluach's name.
@@ -657,109 +480,27 @@ def _shnayim_download(name):
         raise ValueError(f"{url} did not return a PDF")
     return response.content
 
-def shnayimget(session2, parsha, opt): #get shnayim mikra from github repo
-    if 'Shnayim Mikra' not in opt:
-        return
-    if not parsha:
-        # pyluach has no parsha when this Shabbos is Yom Tov (Pesach, Shavuos, Sukkos...).
-        # This used to crash on None.split() below and take the whole PDF down with it.
-        logger.info("No weekly parsha this Shabbos; skipping Shnayim Mikra")
-        st.warning("This Shabbos is Yom Tov, so there is no weekly parsha and no Shnayim Mikra in this PDF.")
-        return
-    # filename2 intentionally keeps whatever pyluach returned verbatim (including the
-    # comma pyluach puts between double-parsha names, e.g. "מטות, מסעי") because the
-    # files in the shnayimfiles repo are named that way too.
-    filename2 = SHNAYIM_FILE_ALIASES.get(parsha, " ".join(parsha.split(" ")))
-    logger.info(f"Shnayim Mikra parsha file: {filename2}")
-
-    # Shnayim{session2}.pdf is a cross-user cache (same file for everyone each week),
-    # same reasoning as dvarget's lock above.
-    with _shnayim_cache_lock:
-        if os.path.exists(f"Shnayim{session2}.pdf"):
-            logger.info("Shnayim%s.pdf already fetched by another session, reusing it", session2)
-            return
-        try:
-            content = _shnayim_download(filename2)
-        except Exception:
-            logger.warning(f"Could not fetch Shnayim Mikra for '{filename2}'", exc_info=True)
-            content = None
-            parts = [part.strip() for part in filename2.split(",")]
-            if len(parts) > 1:
-                # Some combined weeks (e.g. נצבים, וילך) only exist in the repo as one file
-                # per parsha, so join those instead.
-                try:
-                    merged = fitz.open()
-                    for part in parts:
-                        merged.insert_pdf(fitz.open(stream=_shnayim_download(part), filetype="pdf"))
-                    content = merged.tobytes()
-                    logger.info(f"Built Shnayim Mikra for '{filename2}' from {parts}")
-                except Exception:
-                    logger.warning(f"Could not build Shnayim Mikra for '{filename2}' from {parts}", exc_info=True)
-                    content = None
-        if content is None:
-            st.warning(f"Couldn't find Shnayim Mikra for {parsha}, so it is not in this PDF.")
-            return
-        tmp_path = f"Shnayim{session2}.pdf.tmp"
-        with open(tmp_path, "wb") as f:
-            f.write(content)
-        os.replace(tmp_path, f"Shnayim{session2}.pdf")
-        logger.info(f"Saved Shnayim{session2}.pdf")
-
-def daytoheb(week, dow): #converts day of week from week in streamlit to hebrew date, to be used when parsing dvar malchus
-    for i in week:
-        if i == 'Sunday':
-            dow.append('יום ראשון')
-        elif i == 'Monday':
-            dow.append('יום שני')
-        elif i == 'Tuesday':
-            dow.append('יום שלישי')
-        elif i == 'Wednesday':
-            dow.append('יום רביעי')
-        elif i == 'Thursday':
-            dow.append('יום חמישי')
-        elif i == 'Friday':
-            dow.append('יום שישי')
-        elif i == 'Shabbos':
-            dow.append('שבת קודש')
-    return dow
-
-def opttouse(opt, optconv): #sorts through options from opt to optconv, converting some options to hebrew for dvar malchus, to be used when compiling pdf 
-    for i in opt:
-        if i == 'Chumash':
-            optconv.append('חומש יומי')
-        elif i == 'Tanya':
-            optconv.append('תניא יומי')
-        elif i == 'Rambam (3)-Hebrew':
-            optconv.append('רמב"ם - שלושה פרקים ליום')
-        elif i == 'Rambam (1)-Hebrew':
-            # The booklet carries a one-chapter-a-day Rambam section alongside the
-            # three-chapter one, with the same per-day sub-bookmarks. It simply was never
-            # mapped here, so this option always fell through to the catch-all below and
-            # was fetched from Chabad.org even when the booklet was already downloaded.
-            optconv.append('רמב"ם - פרק אחד ליום')
-        elif i == 'Haftorah' or i == 'Krias Hatorah (includes Haftorah)':
-            logger.debug("appended haftorah")
-            optconv.append('חומש לקריאה בציבור')
-        elif i == 'Project Likutei Sichos (Hebrew)':
-            optconv.append('לקוטי שיחות')
-        elif i == 'Maamarim':
-            optconv.append('מאמרים')
-        elif i == 'Shnayim Mikra':
-            optconv.append('Shnayim Mikra')
-        elif 'Rambam' in i or 'Hayom Yom' in i or i in ('Tanya-Bilingual', 'Tanya-English', 'Chumash-Bilingual'):
-            optconv.append(i)
-    return optconv
-
-def daytorambam(week, dor): #converts day of week from week in streamlit to date format for chabad.org, for rambamenglish(), hayonyom(), and chabadget()
-    today = date.today()
-    day_to_n = {'Monday': 0, 'Tuesday': 1, 'Wednesday': 2, 'Thursday': 3, 'Friday': 4, 'Shabbos': 5, 'Sunday': 6}
-    for i in week:
-        n = day_to_n[i]
-        logger.debug(f"day offset: {n}")
-        linkappend = today + relativedelta(weekday=n)
-        y, m, d = str(linkappend).split("-")
-        dor.append(f'{m}%2F{d}%2F{y}')
-    return dor
+@st.cache_data(ttl="7d", max_entries=12, show_spinner=False)
+def shnayim_pdf(parsha):
+    """Shnayim Mikra for one week, by pyluach's Hebrew parsha name, as PDF bytes. Raises when
+    the shnayimfiles repo doesn't have it."""
+    # The name is kept as pyluach gives it, including the comma between double-parsha names
+    # ("מטות, מסעי"), because the files in the repo are named that way too.
+    filename = SHNAYIM_FILE_ALIASES.get(parsha, parsha)
+    try:
+        return _shnayim_download(filename)
+    except Exception:
+        parts = [part.strip() for part in filename.split(",")]
+        if len(parts) < 2:
+            raise
+        # Some combined weeks (e.g. נצבים, וילך) only exist in the repo as one file per
+        # parsha, so join those instead.
+        logger.info("No file for '%s'; joining %s", filename, parts)
+        merged = fitz.open()
+        for part in parts:
+            with fitz.open(stream=_shnayim_download(part), filetype="pdf") as piece:
+                merged.insert_pdf(piece)
+        return merged.tobytes()
 
 def find_next_top_level_bookmark(toc, current_index, last_page):
     for i in range(current_index + 1, len(toc)):
@@ -1078,6 +819,13 @@ def _booklet_day_ranges_by_heading(doc, section):
             # Last day of the section: a new section always opens on a fresh page with its
             # own banner, so this day never continues into it.
             end = section["hi"]
+            # But an unbookmarked page can sit between the two sections (the 11-5-26 booklet has
+            # a לוח תהלים after Shabbos's Chumash), and it came out as the end of Shabbos. Every
+            # page of a day's shiur names the day in its footer, so drop trailing pages that
+            # don't -- only when the day's first page does, in case a booklet stops printing it.
+            if _booklet_footer_names(doc, page_number, day):
+                while end > page_number and not _booklet_footer_names(doc, end, day):
+                    end -= 1
         ranges[day] = (page_number, min(max(end, page_number), section["hi"]))
     return ranges
 
@@ -1209,237 +957,486 @@ def booklet_hayomyom(doc, toc):
             e.pop("open", None)
     return days
 
-def dedupe(pages, pages2, pages3, start_page, end_page): #dedupes the pages when appending, to ensure that pages aren't repeated
-    pages2.append(start_page)
-    pages2.append(end_page)
-    # Consecutive days legitimately share the page they break on, so a day's range can
-    # overlap the previous one. Trim this range down to the part not already inserted.
-    #
-    # This tracks every page taken, not just the two endpoints, and only records pages
-    # once the trimmed range is known to be non-empty. The endpoint-only version could
-    # adjust an endpoint by a single page (not enough when several are already taken),
-    # and it recorded the adjusted endpoints even when the range came out empty -- which
-    # claimed a page nothing had actually inserted and left a hole in the output.
-    seen = set(pages)
-    while start_page <= end_page and start_page in seen:
-        start_page = start_page + 1
-    while start_page <= end_page and end_page in seen:
-        end_page = end_page - 1
-    if start_page > end_page:
-        return start_page, end_page  # fully covered already; caller skips, `pages` untouched
-    for page_number in range(start_page, end_page + 1):
-        if page_number not in seen:
-            pages.append(page_number)
-            pages3.append(page_number)
-    return start_page,end_page
+# --- Which week, and where each day comes from -------------------------------------------------
+# The app used to work on weekday names only, each taken as its next date from today, while
+# the booklet covers one fixed week: on a Thursday, "Sunday" was this week's Sunday from Dvar
+# Malchus but next Sunday from Chabad.org. Now everything works on dates. "This week" is the
+# booklet's own week, read off the dates on its Hayom Yom pages; "Pick dates" is any range.
+# day_sources() decides where each picked option comes from on each date, and both the summary
+# under Generate and the build use it, so the summary shows what the PDF will really have.
+WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos']
+SHORT_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Shabbos']
+MAX_DAYS = 60
+BOOKLET_SECTIONS = {'Chumash': 'חומש יומי', 'Tanya': 'תניא יומי', 'Rambam (3)-Hebrew': 'רמב"ם - שלושה פרקים ליום',
+                    'Rambam (1)-Hebrew': 'רמב"ם - פרק אחד ליום'}
+BOOKLET_HAYOM_YOM = ('Hayom Yom-Hebrew', 'Hayom Yom-Bilingual')
+WEEKLY_DVAR = ['Project Likutei Sichos (Hebrew)', 'Maamarim', 'Krias Hatorah (includes Haftorah)', 'Haftorah']
 
-def ensure_material(name, session, chabad_fetch, sefaria_fetch):
-    # Shared 3-tier trigger: dvar malchus is handled by callers before this point, so this
-    # just tries chabad.org, then falls through to Sefaria only if chabad.org didn't
-    # produce the file. Both fetchers already leave the file absent on failure instead of
-    # raising, so "file still missing" is the sole signal to try the next tier.
-    if os.path.exists(f"{name}{session}.pdf"):
-        return
-    chabad_fetch()
-    if os.path.exists(f"{name}{session}.pdf"):
-        return
-    logger.info("%s not available from Chabad.org, trying Sefaria...", name)
-    sefaria_fetch()
-    # Say so: a silent fallback looks like a layout bug, and hid a real failure for a while.
-    if os.path.exists(f"{name}{session}.pdf"):
-        st.info(f"Chabad.org didn't work for {name} this time, so it comes from Sefaria, in a simpler layout.")
-    else:
-        st.warning(f"Couldn't get {name} from Chabad.org or Sefaria, so it is not in this PDF.")
+@st.cache_resource
+def _booklet_fetch_failures():
+    return {}  # session2 -> when the form last failed to reach dvarmalchus.org, shared by every visitor
 
-def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collecting all the necessary files
-    output_dir = ""
-    toc = []
-    doc_out = fitz.open()
-    pages = []
-    pages2 = []
-    pages3 = []
-    kriahattatch = False
-    # The Rambam pills are multi-select but rambamenglish() only ever writes a single
-    # Rambam{session}.pdf, so without this guard selecting two Chabad-sourced Rambam
-    # variants at once inserted the same file twice.
-    rambamattached = False
-    tanyaattached = False  # same reason: every Tanya option shares one Tanya{session}.pdf
-    chumashattached = False  # and every Chumash option one Chumash{session}.pdf
-    hayomattached = False  # and every Hayom Yom option one Hayom{session}.pdf
-    if source == True:
+def booklet_now(session2):
+    """This week's booklet on disk, downloaded over plain HTTP if it isn't there yet (a couple of
+    seconds, once for everyone). None if dvarmalchus.org can't be reached; that isn't retried for
+    ten minutes, and Generate still tries the browser path."""
+    path = f"dvar{session2}.pdf"
+    if os.path.exists(path):
+        return path
+    failures = _booklet_fetch_failures()
+    if time.time() - failures.get(session2, 0) < 600:
+        return None
+    with _dvar_cache_lock:
+        if not os.path.exists(path) and not _dvarget_http(session2):
+            failures[session2] = time.time()
+            return None
+    return path
+
+@st.cache_data(ttl="12h", show_spinner=False)
+def booklet_sunday(path, mtime):
+    """The Sunday that the booklet's week starts on, from the dates on its Hayom Yom, or None."""
+    try:
+        with fitz.open(path) as doc:
+            days = booklet_hayomyom(doc, doc.get_toc())
+        sunday = chabad_texts.booklet_week_dates(days or [], date.today())["יום ראשון"]
+    except Exception:
+        logger.warning("Couldn't tell which week %s is for", path, exc_info=True)
+        return None
+    if abs((sunday - date.today()).days) > 14:
+        logger.warning("%s seems to be for the week of %s; not using that", path, sunday)
+        return None
+    return sunday
+
+def this_week(session2):
+    """(the seven dates Sunday to Shabbos of this week's booklet, True if read from the booklet).
+    Without the booklet it's the calendar week we're in."""
+    path = booklet_now(session2)
+    sunday = booklet_sunday(path, os.path.getmtime(path)) if path else None
+    from_booklet = sunday is not None
+    if sunday is None:
+        sunday = date.today() - timedelta(days=weekday_index(date.today()))
+    return [sunday + timedelta(days=n) for n in range(7)], from_booklet
+
+def week_parsha(day, hebrew=False):
+    """The parsha of the Shabbos ending day's week, or None when that Shabbos is Yom Tov."""
+    shabbos = day + timedelta(days=6 - weekday_index(day))
+    return parshios.getparsha_string(dates.GregorianDate(shabbos.year, shabbos.month, shabbos.day), israel=False, hebrew=hebrew)
+
+def chosen_days(day_mode, weekday_picks, date_range, week):
+    if day_mode == "Pick dates":
+        if not isinstance(date_range, (tuple, list)) or len(date_range) < 2:
+            return []  # the end date isn't picked yet
+        start, end = date_range[0], date_range[1]
+        return [start + timedelta(days=n) for n in range(min((end - start).days + 1, MAX_DAYS))]
+    return [week[WEEKDAYS.index(name)] for name in sorted(weekday_picks or [], key=WEEKDAYS.index)]
+
+def day_sources(option, days, booklet_days):
+    """[(source, [dates])] in date order, runs of consecutive picked dates with one source:
+    'booklet' (Dvar Malchus), 'chabad' (Chabad.org, Sefaria as backup) or 'none'.
+    booklet_days holds the booklet week's dates when Dvar Malchus is in use, else nothing."""
+    runs = []
+    for day in days:
+        if option in BOOKLET_SECTIONS:
+            source = "booklet" if day in booklet_days else "chabad"
+        elif option in BOOKLET_HAYOM_YOM:
+            source = "booklet" if day in booklet_days else "none"  # Chabad.org has no Hebrew Hayom Yom
+        else:
+            source = "chabad"
+        if runs and runs[-1][0] == source:
+            runs[-1][1].append(day)
+        else:
+            runs.append((source, [day]))
+    return runs
+
+def describe_days(days, by_weekday):
+    """'Nov 1–7, Nov 9' for sorted dates, or 'Sun–Tue, Thu' in This week mode, where the form
+    doesn't show dates."""
+    runs = []
+    for day in days:
+        if runs and day == runs[-1][-1] + timedelta(days=1):
+            runs[-1].append(day)
+        else:
+            runs.append([day])
+    parts = []
+    for run in runs:
+        first, last = run[0], run[-1]
+        if by_weekday:
+            name = lambda d: SHORT_WEEKDAYS[weekday_index(d)]
+            parts.append(name(first) if first == last else f"{name(first)}–{name(last)}")
+        elif first == last:
+            parts.append(f"{first:%b %-d}")
+        elif first.month == last.month:
+            parts.append(f"{first:%b %-d}–{last.day}")
+        else:
+            parts.append(f"{first:%b %-d} – {last:%b %-d}")
+    return ", ".join(parts)
+
+def shnayim_shabbosim(day_mode, days, week):
+    """The Shabbosim whose parsha goes in: this week's, or one for each week the dates touch."""
+    if day_mode != "Pick dates":
+        return [week[6]]
+    return sorted({day + timedelta(days=6 - weekday_index(day)) for day in days})
+
+def weekly_unavailable(use_dvar, day_mode, days, week):
+    """Why the weekly Dvar Malchus items can't go in, or None if they can."""
+    if not use_dvar:
+        return "Dvar Malchus is off"
+    if day_mode == "Pick dates" and not any(day in week for day in days):
+        return f"your dates don't include this week's Dvar Malchus ({describe_days(week, False)})"
+    return None
+
+def pdf_plan(opt, days, booklet_days, weekly_reason, shabbosim, describe):
+    """[(title, [lines])] for the summary under Generate, in the PDF's order."""
+    items = []
+    for option in opt:
+        if option in WEEKLY_DVAR:
+            if option == 'Haftorah' and 'Krias Hatorah (includes Haftorah)' in opt:
+                continue  # the Kriah includes it
+            line = (":material/menu_book: Dvar Malchus · this week" if weekly_reason is None
+                    else f":material/block: Not available · {weekly_reason}")
+            items.append((WEEKLY_LABELS.get(option, option), [line]))
+        elif option == 'Shnayim Mikra':
+            names = [f"Parshas {week_parsha(s)}" if week_parsha(s) else f"none for Shabbos {s:%b %-d} (Yom Tov)" for s in shabbosim]
+            items.append(("Shnayim Mikra", [f":material/description: Shnayim Mikra files · {', '.join(names)}"]))
+        elif days:
+            lines = []
+            for source, run in day_sources(option, days, booklet_days):
+                if source == "booklet":
+                    how = {"Hayom Yom-Hebrew": " (the booklet's pages)", "Hayom Yom-Bilingual": " (with Chabad.org's English)"}.get(option, "")
+                    lines.append(f":material/menu_book: Dvar Malchus · {describe(run)}{how}")
+                elif source == "chabad":
+                    lines.append(f":material/public: Chabad.org · {describe(run)}")
+                else:
+                    lines.append(f":material/block: Not available · {describe(run)}")
+            items.append((option_title(option), lines))
+    return items
+
+# --- Building the PDF ---------------------------------------------------------------------------
+def _page_runs(pages):
+    runs = []
+    for page in pages:
+        if runs and page == runs[-1][1] + 1:
+            runs[-1][1] = page
+        else:
+            runs.append([page, page])
+    return runs
+
+class PdfBuilder:
+    """Collects the PDF's parts in order -- booklet pages, Chabad.org days, Sefaria days and whole
+    PDFs -- then prints and joins them. Neighbouring Chabad.org days in the same layout print
+    together, so a range of dates costs one browser render, not one per day."""
+
+    def __init__(self, booklet_path, week, use_dvar, describe, sizes, chumash_columns):
+        self.booklet_path = booklet_path
+        self.week, self.use_dvar = week, use_dvar
+        self.booklet = fitz.open(booklet_path) if booklet_path else None
+        self.toc = self.booklet.get_toc() if self.booklet else []
+        self.describe = describe
+        self.sizes = sizes
+        self.columns = chumash_columns
+        self.parts = []
+        self.taken = set()      # booklet pages already in: neighbouring days share the page they break on
+        self.ranges = {}        # booklet section title -> its day ranges (None if it isn't there)
+        self.hayomyom = None    # the booklet's Hayom Yom, by Hebrew weekday
+        self.network_failures = 0
+        self.kriah_done = False
+        self.said = set()
+
+    def say(self, kind, text):
+        if text not in self.said:
+            self.said.add(text)
+            (st.warning if kind == "warning" else st.info)(text)
+
+    def add_pages(self, pages):
+        pages = [page for page in pages if page not in self.taken]
+        self.taken.update(pages)
+        if not pages:
+            return
+        if self.parts and self.parts[-1][0] == "pages":
+            self.parts[-1][1].extend(pages)
+        else:
+            self.parts.append(["pages", pages])
+
+    def _add_html(self, kind, material, html):
+        size = self.sizes[material]
+        last = self.parts[-1] if self.parts else None
+        if last and last[0] == kind and last[1] == material and last[2] == size:
+            last[3].append(html)
+        else:
+            self.parts.append([kind, material, size, [html]])
+
+    def daily(self, option, days, booklet_days):
+        # What happened to which days, gathered for the whole option so the notes come out as
+        # one line each rather than one per run of days.
+        self.moved = {"chabad": [], "sefaria": [], "lost": [], "none": []}
+        for source, run in day_sources(option, days, booklet_days):
+            if source == "booklet" and option in BOOKLET_HAYOM_YOM:
+                self._booklet_hayomyom(option, run)
+            elif source == "booklet":
+                self._booklet_days(option, run)
+            elif source == "chabad":
+                self._chabad_days(option, run)
+            else:
+                self.moved["none"] += run
+        title, moved = option_title(option), {kind: self.describe(sorted(run)) for kind, run in self.moved.items() if run}
+        if "chabad" in moved:
+            # A section or day missing from the booklet used to drop out of the PDF; that's how
+            # Rambam went missing for weeks in Cheshvan 5787.
+            self.say("info", f"Couldn't find {title} for {moved['chabad']} in this week's Dvar Malchus, so for those days it "
+                             "comes from Chabad.org.")
+        # Say so: a silent fallback looks like a layout bug, and hid a real failure for a while.
+        if "sefaria" in moved:
+            self.say("info", f"Chabad.org didn't work for {title} on {moved['sefaria']}, so for those days it comes from Sefaria, "
+                             "in a simpler layout.")
+        if "lost" in moved:
+            source_note = "Chabad.org, the only source for it" if option_material(option) == "hayomyom" else "Chabad.org or Sefaria"
+            self.say("warning", f"Couldn't get {title} for {moved['lost']} from {source_note}, so it isn't in this PDF for those days.")
+        if "none" in moved:
+            if not self.use_dvar:
+                why = "which is turned off, so it isn't in this PDF."
+            elif not booklet_days and any(day in self.week for day in self.moved["none"]):
+                why = "which couldn't be downloaded, so it isn't in this PDF."
+            else:
+                why = f"which covers {describe_days(self.week, False)}, so it isn't in this PDF for {moved['none']}."
+            self.say("warning", f"{title} only comes from this week's Dvar Malchus, {why}")
+
+    def _booklet_days(self, option, days):
+        title = BOOKLET_SECTIONS[option]
+        if title not in self.ranges:
+            self.ranges[title] = booklet_day_ranges(self.booklet, self.toc, title)
+        ranges = self.ranges[title] or {}
+        pending = []  # days the booklet doesn't have, for Chabad.org, kept in date order
+        for day in days:
+            span = ranges.get(BOOKLET_DAYS[weekday_index(day)])
+            if span is None:
+                logger.warning("%s not found in the booklet for %s", title, day)
+                self.moved["chabad"].append(day)
+                pending.append(day)
+                continue
+            if pending:
+                self._chabad_days(option, pending)
+                pending = []
+            self.add_pages(range(span[0], span[1] + 1))
+        if pending:
+            self._chabad_days(option, pending)
+
+    def _chabad_days(self, option, days):
+        material = option_material(option)
+        fallback = []  # a run of days Chabad.org couldn't supply
+        for day in days:
+            section = None
+            # After a few network failures in a row Chabad.org is taken to be down, so the
+            # rest goes straight to the fallback instead of waiting on each day's timeouts.
+            if self.network_failures < 3:
+                try:
+                    section = chabad_section(option, day, self.columns)
+                    self.network_failures = 0
+                except requests.RequestException:
+                    logger.warning("Chabad.org unreachable for %s on %s", option, day, exc_info=True)
+                    self.network_failures += 1
+                except Exception:
+                    logger.warning("Chabad.org %s failed for %s", option, day, exc_info=True)
+            if section is None:
+                fallback.append(day)
+                continue
+            if fallback:
+                self._fallback(option, fallback)
+                fallback = []
+            self._add_html("chabad", material, section)
+        if fallback:
+            self._fallback(option, fallback)
+
+    def _fallback(self, option, days):
+        if option_material(option) == "hayomyom":
+            self.moved["lost"] += days  # no other source has Hayom Yom
+            return
+        for day in days:
+            try:
+                html = sefaria_day_html(option, day)
+            except Exception:
+                logger.warning("Sefaria %s failed for %s", option, day, exc_info=True)
+                html = None
+            if html:
+                self._add_html("sefaria", option_material(option), html)
+                self.moved["sefaria"].append(day)
+            else:
+                self.moved["lost"].append(day)
+
+    def _booklet_hayomyom(self, option, days):
+        # Hebrew is the booklet's own pages (a page can carry the neighbouring days too);
+        # Bilingual pairs the booklet's Hebrew text with Chabad.org's English for the same date.
+        if self.hayomyom is None:
+            try:
+                found = booklet_hayomyom(self.booklet, self.toc) or []
+            except Exception:
+                logger.warning("Couldn't read Hayom Yom from the booklet", exc_info=True)
+                found = []
+            self.hayomyom = {day["weekday"]: day for day in found}
+        missing, failed = [], []
+        for day in days:
+            found = self.hayomyom.get(BOOKLET_DAYS[weekday_index(day)])
+            if not found:
+                missing.append(day)
+            elif option == "Hayom Yom-Hebrew":
+                self.add_pages(found["pages"])
+            else:
+                try:
+                    self._add_html("chabad", "hayomyom", chabad_texts.hayomyom_booklet_section(day, found["entries"], "both"))
+                except Exception:
+                    logger.warning("Bilingual Hayom Yom failed for %s", day, exc_info=True)
+                    failed.append(day)
+        if missing:
+            self.say("warning", f"Couldn't find Hayom Yom for {self.describe(missing)} in this week's Dvar Malchus, "
+                                f"so {language_label(option)} Hayom Yom for those days isn't in this PDF.")
+        if failed:
+            self.say("warning", f"Couldn't build Bilingual Hayom Yom for {self.describe(failed)}, so it isn't in this PDF.")
+
+    def weekly(self, option, opt):
+        toc, last_page = self.toc, self.booklet.page_count - 1
+        if option == 'Maamarim':
+            maamarim = booklet_maamarim_pages(toc, last_page)
+            if maamarim is None:
+                logger.warning("Maamarim section not found in the Dvar Malchus bookmarks")
+                self.say("warning", "Couldn't find the Maamarim in this week's Dvar Malchus, so they aren't in this PDF.")
+            else:
+                self.add_pages(range(maamarim[0], maamarim[1] + 1))
+        elif option == 'Project Likutei Sichos (Hebrew)':
+            found = False
+            for i, item in enumerate(toc):
+                words = item[1].split()
+                # words[n + 1:n + 2] rather than words[n + 1], so a title that ends in 'לקוטי'
+                # can't raise IndexError.
+                if any(word == 'לקוטי' and words[n + 1:n + 2] == ['שיחות'] for n, word in enumerate(words)):
+                    found = True
+                    self.add_pages(range(item[2] - 1, find_next_top_level_bookmark(toc, i, last_page) + 1))
+            if not found:
+                logger.warning("Likutei Sichos section not found in the Dvar Malchus bookmarks")
+                self.say("warning", "Couldn't find Likutei Sichos in this week's Dvar Malchus, so it isn't in this PDF.")
+        elif not self.kriah_done:  # Kriah and Haftorah are one section; add it once
+            self.kriah_done = True
+            kriah = booklet_kriah_pages(self.booklet, toc)
+            if kriah is None:
+                logger.warning("Krias Hatorah section not found in the Dvar Malchus bookmarks")
+                self.say("warning", "Couldn't find Krias Hatorah in this week's Dvar Malchus (Yom Tov booklets may not have it), "
+                                    "so the Kriah and Haftorah aren't in this PDF.")
+            elif 'Krias Hatorah (includes Haftorah)' in opt:
+                self.add_pages(range(kriah[0], kriah[1] + 1))
+            else:
+                haftorah_start = booklet_haftorah_start(self.booklet_path, kriah[0], kriah[1])
+                if haftorah_start is None:
+                    logger.warning("Haftorah start not found in pages %d-%d", kriah[0], kriah[1])
+                    self.say("warning", "Couldn't find where the Haftorah starts in this week's Dvar Malchus, so it isn't in "
+                                        "this PDF. Try Krias Hatorah instead, which includes the Haftorah.")
+                else:
+                    self.add_pages(range(haftorah_start, kriah[1] + 1))
+
+    def shnayim(self, shabbosim):
+        for shabbos in shabbosim:
+            parsha = week_parsha(shabbos, hebrew=True)
+            if not parsha:
+                # pyluach has no parsha when Shabbos is Yom Tov (Pesach, Shavuos, Sukkos...).
+                self.say("warning", f"Shabbos {shabbos:%b %-d} is Yom Tov, so there's no weekly parsha and no Shnayim Mikra "
+                                    "for that week.")
+                continue
+            try:
+                self.parts.append(["pdf", shnayim_pdf(parsha)])
+            except Exception:
+                logger.warning("Could not fetch Shnayim Mikra for '%s'", parsha, exc_info=True)
+                self.say("warning", f"Couldn't find Shnayim Mikra for {parsha}, so it isn't in this PDF.")
+
+    def assemble(self):
+        out = fitz.open()
+        for part in self.parts:
+            try:
+                if part[0] == "pages":
+                    for first, last in _page_runs(part[1]):
+                        out.insert_pdf(self.booklet, from_page=first, to_page=last)
+                    continue
+                if part[0] == "chabad":
+                    data = render_pdf_bytes(chabad_texts.page(part[1], part[3]), part[2])
+                elif part[0] == "sefaria":
+                    data = render_pdf_bytes(_SEFARIA_HTML_HEAD + "".join(part[3]) + _SEFARIA_HTML_END, part[2], sefaria=True)
+                else:
+                    data = part[1]
+                with fitz.open(stream=data, filetype="pdf") as piece:
+                    out.insert_pdf(piece)
+            except Exception:
+                logger.warning("Couldn't print part of the PDF (%s)", part[0], exc_info=True)
+                self.say("warning", "Part of this PDF couldn't be printed, so it's missing. Please try again.")
+        if self.booklet:
+            self.booklet.close()
+        return out
+
+def generate(opt, day_mode, weekday_picks, date_range, use_dvar, cover, sizes, chumash_columns, session2):
+    """Builds the PDF for the form's choices and offers it for download."""
+    session = st.session_state.setdefault('id', dt.now())
+    try:
+        os.remove(f"output_dynamic{session}.pdf")  # last run's, so a failed run can't leave it looking like this one's
+    except FileNotFoundError:
+        pass
+    if not opt:
+        st.error("Please select at least one material to print before generating the PDF.")
+        return
+    week, _ = this_week(session2)
+    days = chosen_days(day_mode, weekday_picks, date_range, week)
+    daily = [o for o in opt if option_material(o)]
+    if daily and not days:
+        st.error("Please pick a start and an end date." if day_mode == "Pick dates" else
+                 "Please select at least one day of the week if trying to select Chumash, Tanya, Hayom Yom or Rambam.")
+        return
+    logger.info("Generating %s for %s (%s, Dvar Malchus %s)", opt, days, day_mode, use_dvar)
+    weekly = [o for o in opt if o in WEEKLY_DVAR]
+    weekly_ok = weekly_unavailable(use_dvar, day_mode, days, week) is None
+    from_booklet_needed = any(o in BOOKLET_SECTIONS or o in BOOKLET_HAYOM_YOM for o in daily) and any(d in week for d in days)
+    booklet_path = None
+    if use_dvar and (cover or (weekly and weekly_ok) or from_booklet_needed):
         try:
-            doc = fitz.open(f"dvar{session2}.pdf")
-            toc = doc.get_toc()
-            if cover == True:
-                doc_out.insert_pdf(doc, from_page=0, to_page=0)
+            with st.spinner("Getting this week's Dvar Malchus..."):
+                dvarget(session2)
         except Exception:
-            logger.warning("Something went wrong opening Dvar Malchus PDF, falling back to Chabad.org", exc_info=True)
-            st.write("Something went wrong with Dvar Malchus. Attempting to use Chabad.org.")
-            logger.info(opt)
-            # The booklet-only options are reported by the Chabad.org branch below.
-            source = False
-            if any(o in opt for o in CHUMASH_NAMES):
-                ensure_material("Chumash", session, lambda: chabadget(dor, opt, session),
-                                 lambda: sefaria_chumash_get(week, session, opt))
-            if any(o in opt for o in TANYA_NAMES):
-                ensure_material("Tanya", session, lambda: chabadget(dor, opt, session),
-                                 lambda: sefaria_tanya_get(week, session, opt))
-            if rambam_requested:
-                # Closes a latent gap: this inline fallback used to only call chabadget()
-                # and never rambamenglish(), so if Dvar Malchus's file existed but was
-                # corrupt/unreadable (caught here), Rambam silently never got fetched and
-                # the script crashed later trying to open a Rambam file that never existed.
-                ensure_material("Rambam", session, lambda: rambamenglish(dor, session, opt),
-                                 lambda: sefaria_rambam_get(week, session, opt))
-
-    if source == False:
-            logger.info("Chabad.org")
-            logger.info(opt)
-            # These only exist in Dvar Malchus. The old check listed 'Project Likutei Sichos'
-            # without "(Hebrew)", so it never matched that option, and when they were mixed
-            # with Chabad.org materials they were dropped without a word.
-            booklet_only = [o for o in opt if o in ('Project Likutei Sichos (Hebrew)', 'Maamarim', 'Haftorah', 'Krias Hatorah (includes Haftorah)')]
-            if booklet_only and len(booklet_only) == len(opt):
-                st.error("Project Likutei Sichos, Kriah, the Haftorah, and Maamarim are not available from Chabad.org. Please try again.")
-                st.stop()
-            if booklet_only:
-                st.warning(f"Dvar Malchus wasn't used for this PDF, and {', '.join(booklet_only)} only come from there, "
-                           "so they are not in it.")
-            for option in opt:
-                if option in CHUMASH_NAMES:
-                    if not chumashattached:
-                        append_material(doc_out, f"Chumash{session}.pdf", "Chumash")
-                        chumashattached = True
-                elif option in TANYA_NAMES:
-                    if not tanyaattached:
-                        append_material(doc_out, f"Tanya{session}.pdf", "Tanya")
-                        tanyaattached = True
-                elif 'Rambam' in option:
-                    if not rambamattached:
-                        append_material(doc_out, f"Rambam{session}.pdf", "Rambam") #type: ignore
-                        rambamattached = True
-                elif option in HAYOM_YOM_NAMES:
-                    if not hayomattached:
-                        append_material(doc_out, f"Hayom{session}.pdf", "Hayom Yom")
-                        hayomattached = True
-                elif option == 'Shnayim Mikra':
-                    append_material(doc_out, f"Shnayim{session2}.pdf", "Shnayim Mikra")
-
-    else:
-        for q in optconv:
-            # Day ranges are resolved once per section rather than once per selected day,
-            # since the heading scan reads every page of the section.
-            day_ranges = booklet_day_ranges(doc, toc, q) #type: ignore
-            if day_ranges is None and q in BOOKLET_LEGACY_OFFSETS:
-                # A day-based section that isn't in the booklet used to just drop out of the
-                # PDF with nothing said -- that is how Rambam went missing for several weeks
-                # in Cheshvan 5787. Nothing else below picks these sections up, so tell the user.
-                logger.warning("Section %s not found in the Dvar Malchus bookmarks", q)
-                st.warning(f"Couldn't find {q} in this week's Dvar Malchus, so it is not in this PDF. "
-                           "To get it from Chabad.org instead, turn off the Dvar Malchus toggle and create the PDF again.")
-            if day_ranges:
-                for z in dow:
-                    if z not in day_ranges:
-                        continue
-                    start_page, end_page = day_ranges[z]
-                    logger.debug(f"{q} {z}: Current Start Page: {start_page}. Current End Page: {end_page}")
-                    # Consecutive days legitimately share the page they break on, so the
-                    # dedupe below still earns its keep: it keeps that shared page from
-                    # being inserted twice when both days are selected.
-                    start_page, end_page = dedupe(pages, pages2, pages3, start_page, end_page)
-                    logger.debug(f"New Start Page: {start_page}. New End Page: {end_page}")
-                    if start_page > end_page:
-                        # Everything unique to this day sits on a page an earlier selected
-                        # day already contributed, so there is nothing left to add.
-                        continue
-                    doc_out.insert_pdf(doc, from_page=start_page, to_page=end_page) #type: ignore
-
-            if q == 'מאמרים':
-                maamarim = booklet_maamarim_pages(toc, doc.page_count - 1) #type: ignore
-                if maamarim is None:
-                    logger.warning("Maamarim section not found in the Dvar Malchus bookmarks")
-                    st.warning("Couldn't find the Maamarim in this week's Dvar Malchus, so they are not in this PDF.")
+            logger.warning("Dvar Malchus fetch failed, falling back to Chabad.org", exc_info=True)
+        if os.path.exists(f"dvar{session2}.pdf"):
+            booklet_path = f"dvar{session2}.pdf"
+            # If the form couldn't reach dvarmalchus.org, its week was the calendar week; now
+            # that the booklet is here, go by its own week.
+            week, _ = this_week(session2)
+            days = chosen_days(day_mode, weekday_picks, date_range, week)
+        else:
+            st.warning("Couldn't download this week's Dvar Malchus, so the Hebrew comes from Chabad.org instead, "
+                       "and what only Dvar Malchus has is left out.")
+    booklet_days = set(week) if booklet_path else set()
+    describe = lambda run: describe_days(run, by_weekday=day_mode != "Pick dates")
+    builder = PdfBuilder(booklet_path, week, use_dvar, describe, sizes, chumash_columns)
+    if cover and booklet_path:
+        builder.add_pages([0])
+    for option in opt:
+        with st.spinner(f"Getting {option_title(option)}..."):
+            if option in WEEKLY_DVAR:
+                if booklet_path and weekly_ok:
+                    builder.weekly(option, opt)
                 else:
-                    logger.debug(f"Maamarim found: pages {maamarim[0]}-{maamarim[1]}")
-                    doc_out.insert_pdf(doc, from_page=maamarim[0], to_page=maamarim[1]) #type: ignore
-
-            if q == 'לקוטי שיחות':
-                sichos_found = False
-                for i, item in enumerate(toc): #type: ignore
-                    words = item[1].split()
-                    # words[n + 1:n + 2] rather than words[n + 1], so a title that ends in
-                    # 'לקוטי' can't raise IndexError.
-                    if any(word == 'לקוטי' and words[n + 1:n + 2] == ['שיחות'] for n, word in enumerate(words)):
-                        logger.debug("Likutei Sichos found")
-                        sichos_found = True
-                        page_num_start = item[2] - 1
-                        page_num_end = find_next_top_level_bookmark(toc, i, doc.page_count - 1) #type: ignore
-                        doc_out.insert_pdf(doc, from_page=page_num_start, to_page=page_num_end) #type: ignore
-                if not sichos_found:
-                    logger.warning("Likutei Sichos section not found in the Dvar Malchus bookmarks")
-                    st.warning("Couldn't find Likutei Sichos in this week's Dvar Malchus, so it is not in this PDF.")
-
-            # opttouse() maps both Kriah and Haftorah to this title, so it can come up twice;
-            # kriahattatch makes sure the section is only added once.
-            if q == 'חומש לקריאה בציבור' and not kriahattatch:
-                kriahattatch = True
-                kriah = booklet_kriah_pages(doc, toc) #type: ignore
-                if kriah is None:
-                    logger.warning("Krias Hatorah section not found in the Dvar Malchus bookmarks")
-                    st.warning("Couldn't find Krias Hatorah in this week's Dvar Malchus (Yom Tov booklets may not have it), "
-                               "so the Kriah and Haftorah are not in this PDF.")
-                elif "Krias Hatorah (includes Haftorah)" in opt:
-                    logger.debug(f"Kriah found: pages {kriah[0]}-{kriah[1]}")
-                    doc_out.insert_pdf(doc, from_page=kriah[0], to_page=kriah[1]) #type: ignore
-                else:
-                    haftorah_start = booklet_haftorah_start(f"dvar{session2}.pdf", kriah[0], kriah[1])
-                    if haftorah_start is None:
-                        logger.warning("Haftorah start not found in pages %d-%d", kriah[0], kriah[1])
-                        st.warning("Couldn't find where the Haftorah starts in this week's Dvar Malchus, so it is not in this PDF. "
-                                   "Try Krias Hatorah instead, which includes the Haftorah.")
-                    else:
-                        logger.debug(f"Haftorah found: pages {haftorah_start}-{kriah[1]}")
-                        doc_out.insert_pdf(doc, from_page=haftorah_start, to_page=kriah[1]) #type: ignore
-
-            if 'Rambam' in q:
-                # Only the non-Hebrew Rambam variants reach here as raw option strings;
-                # the Hebrew ones are mapped to their booklet section titles by opttouse()
-                # and are handled by the day-range branch above.
-                if not rambamattached:
-                    append_material(doc_out, f"Rambam{session}.pdf", "Rambam")
-                    rambamattached = True
-                    
-                continue
-
-            if q == 'Chumash-Bilingual':
-                # The Hebrew Chumash comes from the booklet above; these come from Chabad.org.
-                if not chumashattached:
-                    append_material(doc_out, f"Chumash{session}.pdf", "Chumash")
-                    chumashattached = True
-                continue
-
-            if q in ('Tanya-Bilingual', 'Tanya-English'):
-                # The Hebrew Tanya comes from the booklet above; these come from Chabad.org.
-                if not tanyaattached:
-                    append_material(doc_out, f"Tanya{session}.pdf", "Tanya")
-                    tanyaattached = True
-                continue
-
-            if q in HAYOM_YOM_NAMES:
-                if not hayomattached:
-                    append_material(doc_out, f"Hayom{session}.pdf", "Hayom Yom")
-                    hayomattached = True
-                
-                continue
-
-            if q == 'Shnayim Mikra':
-                append_material(doc_out, f"Shnayim{session2}.pdf", "Shnayim Mikra")
-                
-                continue
-                       
-    _ = doc_out.save(os.path.join(output_dir, f"output_dynamic{session}.pdf")) if doc_out.page_count > 0 else (logger.error("No pages were added to the output PDF (opt=%r, source=%r); refusing to save an empty document.", opt, source), st.error("No content was generated for your selections — nothing could be added to the PDF. Please check your selections and try again."), st.stop())  # NB: assignment, not a bare expression -- keeps Streamlit magic from rendering the None result as "None"
-    doc_out.close()
-
+                    reason = weekly_unavailable(use_dvar, day_mode, days, week) or "it couldn't be downloaded"
+                    builder.say("warning", f"{WEEKLY_LABELS.get(option, option)} only comes from this week's Dvar Malchus, "
+                                           f"and {reason}, so it isn't in this PDF.")
+            elif option == 'Shnayim Mikra':
+                builder.shnayim(shnayim_shabbosim(day_mode, days, week))
+            else:
+                builder.daily(option, days, booklet_days)
+    with st.spinner("Putting the PDF together..."):
+        out = builder.assemble()
+    if out.page_count == 0:
+        logger.error("No pages were added to the output PDF (opt=%r, days=%r)", opt, days)
+        st.error("No content was generated for your selections — nothing could be added to the PDF. "
+                 "Please check your selections and try again.")
+        return
+    out.save(f"output_dynamic{session}.pdf")
+    out.close()
+    st.success("PDF created successfully!")
+    st.balloons()
+    with open(f"output_dynamic{session}.pdf", "rb") as f:
+        # on_click="ignore": downloading doesn't rerun the app, so the page stays as it is.
+        st.download_button(label="Download ⬇️", data=f.read(), file_name="Custom_Chitas.pdf", mime="application/pdf",
+                           on_click="ignore")
 
 @st.cache_data(ttl="12h")
 def dateset():
@@ -1449,14 +1446,31 @@ def dateset():
 
 # Linked choices. These used to sit in a st.form, which only reacts on submit; out of the form,
 # each choice can update the settings tied to it as soon as it's made.
-ALL_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos']
+ALL_DAYS = WEEKDAYS
 SIZE_KEYS = ("size_chumash", "size_tanya", "size_rambam", "size_hayom")
+CHOICE_KEYS = ("day_mode", "print_size", "chumash_layout")  # single choices that must always have one picked
 DVAR_ONLY = {"Hayom Yom-Hebrew": "Hebrew Hayom Yom", "Hayom Yom-Bilingual": "Bilingual Hayom Yom",
              'Project Likutei Sichos (Hebrew)': "Likutei Sichos", 'Maamarim': "Maamarim",
              'Krias Hatorah (includes Haftorah)': "Krias HaTorah", 'Haftorah': "the Haftorah"}
+TODAY = date.today()
+# ?days=dates opens with Pick dates on; the old Chitas Collator app links here that way.
 for key, value in (("days", []), ("whole_week", False), ("print_size", "Standard"), ("chumash_layout", "Two columns"),
+                   ("day_mode", "Pick dates" if st.query_params.get("days") == "dates" else "This week"),
+                   ("date_range", (TODAY, TODAY + timedelta(days=13))),
                    ("use_dvar", True), ("advanced_open", False), *((k, 100) for k in SIZE_KEYS)):
     st.session_state.setdefault(key, value)
+# Streamlit forgets a widget's value on a run where it isn't drawn, so the weekday picks would be
+# lost while Pick dates is showing, and the dates while This week is. Keep them.
+for key in ("days", "whole_week", "date_range"):
+    st.session_state[key] = st.session_state[key]
+for key in CHOICE_KEYS:
+    if st.session_state.get(key) is not None:
+        st.session_state[f"_last_{key}"] = st.session_state[key]
+
+def _keep_choice(key):
+    # Clicking the picked choice of a segmented control unpicks it; put it back.
+    if st.session_state[key] is None:
+        st.session_state[key] = st.session_state.get(f"_last_{key}")
 
 def _whole_week_changed():
     st.session_state.days = list(ALL_DAYS) if st.session_state.whole_week else []
@@ -1464,9 +1478,13 @@ def _whole_week_changed():
 def _days_changed():
     st.session_state.whole_week = set(st.session_state.days or []) == set(ALL_DAYS)
 
+def _quick_range(count):
+    st.session_state.date_range = (TODAY, TODAY + timedelta(days=count - 1))
+
 def _print_size_changed():
     # A preset sets every size, and the Chumash layout that suits it. Custom opens Advanced
     # options, where the sizes are.
+    _keep_choice("print_size")
     if st.session_state.print_size == "Custom":
         st.session_state.advanced_open = True
     size = PRINT_SIZES.get(st.session_state.print_size)
@@ -1496,14 +1514,14 @@ def _use_dvar_changed():
 ORDER_GROUPS = {
     "Chumash": CHUMASH_NAMES,
     "Tanya": TANYA_NAMES,
-    "Rambam": ['Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English'],
+    "Rambam": RAMBAM_NAMES,
     "Hayom Yom": HAYOM_YOM_NAMES,
     "Likutei Sichos": ['Project Likutei Sichos (Hebrew)'],
     "Maamarim": ['Maamarim'],
     "Krias HaTorah / Haftorah": ['Haftorah', 'Krias Hatorah (includes Haftorah)'],
     "Shnayim Mikra": ['Shnayim Mikra'],
 }
-PICK_KEYS = ("chumash_pick", "tanya_pick", "hayom_pick", "rambam3_pick", "rambam1_pick", "weekly_pick")
+PICK_KEYS = ("chumash_pick", "tanya_pick", "hayom_pick", "rambam3_pick", "rambam1_pick", "weekly_pick", "shnayim_pick")
 st.session_state.setdefault("pdf_order", list(ORDER_GROUPS))
 
 def _picked_groups():
@@ -1523,22 +1541,53 @@ def _reset_order():
 
 with st.container(border=True): # the choices; not a st.form, so linked choices update as you click
     st.title("Dvar Creator 📚 (BETA)")
-    st.info("Need more than 1 week? Check out 📖[Chitas Collator](https://chitas-collator.streamlit.app/)!")
-    st.markdown("""This app is designed to create a printout for Chitas, Rambam, plus a few other things. To get the materials directly and support the original publishers, go to ![](https://www.google.com/s2/favicons?domain=dvarmalchus.org&sz=16) :blue[**[Dvar Malchus](https://dvarmalchus.org/)**]
+    st.markdown("""This app is designed to create a printout for Chitas, Rambam, plus a few other things, for this week or any dates you pick. To get the materials directly and support the original publishers, go to ![](https://www.google.com/s2/favicons?domain=dvarmalchus.org&sz=16) :blue[**[Dvar Malchus](https://dvarmalchus.org/)**]
     and ![](https://www.google.com/s2/favicons?domain=chabad.org&sz=16) :orange[**[Chabad.org](https://www.chabad.org/dailystudy/default_cdo/jewish/Daily-Study.htm/)**].
     For Chumash, Tanya, and Rambam, if both of those are unavailable this app will fall back to ![](https://www.google.com/s2/favicons?domain=sefaria.org&sz=16) :green[**[Sefaria](https://www.sefaria.org/)**].
     """, unsafe_allow_html=True)
     session2 = dateset()
-    date1 = date.today().strftime('%Y, %-m, %-d')
-    year, day, month = date1.split(", ")
-    year, day, month = int(year), int(day), int(month)
-    parsha = parshios.getparsha_string(dates.GregorianDate(year, day, month), israel=False, hebrew=True)
+    if os.path.exists(f"dvar{session2}.pdf"):
+        week, week_from_booklet = this_week(session2)
+    else:
+        with st.spinner("Checking this week's Dvar Malchus..."):
+            week, week_from_booklet = this_week(session2)
+    use_dvar = st.session_state.use_dvar  # the toggle itself is under Print
+
     st.subheader("1. Days")
-    week = st.pills("Which days?", options=ALL_DAYS, selection_mode="multi", key="days", on_change=_days_changed)
-    whole_week = st.checkbox("Whole week (Sunday to Shabbos)", key="whole_week", on_change=_whole_week_changed)
+    day_mode = st.segmented_control("Days", ["This week", "Pick dates"], key="day_mode", on_change=_keep_choice, args=("day_mode",),
+                                    label_visibility="collapsed")
+    if day_mode != "Pick dates":
+        parsha_name = week_parsha(week[0])
+        week_name = f"Parshas {parsha_name}" if parsha_name else "a Yom Tov week"
+        st.caption(f"This week's Dvar Malchus: {week_name}" if week_from_booklet else
+                   f"This week: {week_name}. (Couldn't check Dvar Malchus just now.)")
+        st.pills("Which days?", options=ALL_DAYS, selection_mode="multi", key="days", on_change=_days_changed)
+        st.checkbox("Whole week (Sunday to Shabbos)", key="whole_week", on_change=_whole_week_changed)
+    else:
+        st.date_input("From – to", key="date_range", min_value=TODAY - timedelta(days=30), max_value=TODAY + timedelta(days=365),
+                      format="MM/DD/YYYY")
+        with st.container(horizontal=True):  # a row, even on a phone, where columns would stack
+            st.button("Next 7 days", on_click=_quick_range, args=(7,))
+            st.button("Next 2 weeks", on_click=_quick_range, args=(14,))
+            st.button("Next 30 days", on_click=_quick_range, args=(30,))
+        picked_range = st.session_state.date_range
+        if isinstance(picked_range, (tuple, list)) and len(picked_range) == 2 and (picked_range[1] - picked_range[0]).days + 1 > MAX_DAYS:
+            st.warning(f"That's more than {MAX_DAYS} days. Only the first {MAX_DAYS} will print.")
+    days = chosen_days(day_mode, st.session_state.days, st.session_state.date_range, week)
+    in_week = [day for day in days if day in week]
+    describe = lambda run: describe_days(run, by_weekday=day_mode != "Pick dates")
+    if day_mode == "Pick dates" and days:
+        count = f"{len(days)} day{'s' if len(days) != 1 else ''}"
+        if not use_dvar:
+            st.caption(f"{count}, all from Chabad.org.")
+        elif in_week:
+            st.caption(f"{count}. This week's Dvar Malchus covers {describe(in_week)}; for the other dates, "
+                       "the Hebrew comes from Chabad.org.")
+        else:
+            st.caption(f"{count}, none in this week's Dvar Malchus ({describe_days(week, False)}), so all from Chabad.org.")
 
     st.subheader("2. Daily learning")
-    st.caption("Pick one or more languages for each. Hebrew comes from Dvar Malchus when that's on; "
+    st.caption("Pick one or more languages for each. Hebrew comes from Dvar Malchus for its week when that's on; "
                "Bilingual and English come from Chabad.org.")
     learning_left, learning_right = st.columns(2)
     with learning_left:
@@ -1546,18 +1595,28 @@ with st.container(border=True): # the choices; not a st.form, so linked choices 
         tanyaopts = st.pills("Tanya", options=TANYA_NAMES, selection_mode="multi", format_func=language_label, key="tanya_pick")
         hayomopts = st.pills("Hayom Yom", options=HAYOM_YOM_NAMES, selection_mode="multi", format_func=language_label,
                              key="hayom_pick", on_change=_dvar_only_picked,
-                             help="Hebrew and Bilingual Hayom Yom need Dvar Malchus (Chabad.org only has the English). "
-                                  "Hebrew is the booklet's own pages, so a page can show the days next to yours too.")
+                             help="Hebrew and Bilingual Hayom Yom come from Dvar Malchus, so only for its week (Chabad.org only has "
+                                  "the English). Hebrew is the booklet's own pages, so a page can show the days next to yours too.")
+        if [o for o in hayomopts or [] if o in BOOKLET_HAYOM_YOM] and days:
+            if not (use_dvar and in_week):
+                st.caption(":orange[Hebrew and Bilingual Hayom Yom need dates in this week's Dvar Malchus, with it on.]")
+            elif len(in_week) < len(days):
+                st.caption(f":orange[Hebrew and Bilingual Hayom Yom only cover {describe(in_week)}.]")
     with learning_right:
-        rambam3opts = st.pills("Rambam · 3 chapters a day", options=['Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English'],
+        rambam3opts = st.pills("Rambam · 3 chapters a day", options=RAMBAM_NAMES[:3],
                                selection_mode="multi", format_func=language_label, key="rambam3_pick")
-        rambam1opts = st.pills("Rambam · 1 chapter a day", options=['Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English'],
+        rambam1opts = st.pills("Rambam · 1 chapter a day", options=RAMBAM_NAMES[3:],
                                selection_mode="multi", format_func=language_label, key="rambam1_pick")
 
     st.subheader("3. Weekly")
-    extras = st.pills("For the week", help="Shnayim Mikra works either way; the others only come from Dvar Malchus.",
-                      options=['Project Likutei Sichos (Hebrew)', 'Maamarim', 'Krias Hatorah (includes Haftorah)', 'Haftorah', 'Shnayim Mikra'],
-                      selection_mode="multi", format_func=lambda o: WEEKLY_LABELS.get(o, o), key="weekly_pick", on_change=_dvar_only_picked)
+    outside_week = day_mode == "Pick dates" and not in_week
+    extras = st.pills("From Dvar Malchus", options=WEEKLY_DVAR, selection_mode="multi", format_func=lambda o: WEEKLY_LABELS.get(o, o),
+                      key="weekly_pick", on_change=_dvar_only_picked, disabled=outside_week,
+                      help="These only come from this week's Dvar Malchus.")
+    if outside_week:
+        st.caption(f"Only when your dates include this week's Dvar Malchus ({describe_days(week, False)}).")
+    shnayimopts = st.pills("Other", options=['Shnayim Mikra'], selection_mode="multi", key="shnayim_pick",
+                           help="This week's parsha, or with Pick dates, the parsha of each week your dates touch.")
 
     st.subheader("4. Print")
     # One per row: side by side, the four Text size choices didn't fit half the width and
@@ -1567,10 +1626,12 @@ with st.container(border=True): # the choices; not a st.form, so linked choices 
                                            "and switches Chumash to one column. Custom: set each material's size under Advanced "
                                            "options. Pages taken from Dvar Malchus print as they are.")
     chumash_layout = st.segmented_control("Chumash layout (Hebrew)", options=["Two columns", "One column"], key="chumash_layout",
+                                          on_change=_keep_choice, args=("chumash_layout",),
                                           help="Two columns fits about a quarter more on a page.")
     source = st.toggle("Use Dvar Malchus when possible", key="use_dvar", on_change=_use_dvar_changed,
-                       help="On: Hebrew Chumash, Tanya, Rambam and Hayom Yom, and the weekly items, come from this week's Dvar Malchus "
-                            "booklet. Off: everything comes from Chabad.org (Sefaria if that fails), and items only Dvar Malchus has are left out.")
+                       help="On: for the days in this week's Dvar Malchus, Hebrew Chumash, Tanya, Rambam and Hayom Yom come from the "
+                            "booklet, and so do the weekly items. Off: everything comes from Chabad.org (Sefaria if that fails), "
+                            "and items only Dvar Malchus has are left out.")
     with st.expander("Order in the PDF"):
         shown = _picked_groups()
         if not shown:
@@ -1591,129 +1652,35 @@ with st.container(border=True): # the choices; not a st.form, so linked choices 
         scaleslide3 = st.slider('Hayom Yom', 30, 150, format="%d%%", key="size_hayom", on_change=_size_changed)
     # Chrome's print scale (Page.printToPDF "scale", 10-200%): text, spacing and line length
     # all scale together on the same page. The sliders always match the chosen Text size.
-    scale, scale2, scale3, scale4 = scaleslide / 100, scaleslide2 / 100, scaleslide3 / 100, scaleslide4 / 100
+    sizes = {"chumash": scaleslide / 100, "tanya": scaleslide4 / 100, "rambam": scaleslide2 / 100, "hayomyom": scaleslide3 / 100}
     chumash_columns = 1 if chumash_layout == "One column" else 2
 
-    submit_button = st.button("Generate PDF ▶️", type="primary", use_container_width=True)
-
-if submit_button: #if the user submits the form, run the following code, which will create the pdf using above functions
-    if 'id' not in st.session_state:
-        st.session_state['id'] = dt.now()
-    opt = []
-    # st.pills() in multi-select mode returns [] when nothing is selected, but guard
-    # with truthiness anyway in case a future Streamlit change reintroduces None.
-    for picked in (chumashopts, tanyaopts, hayomopts, rambam3opts, rambam1opts, extras):
-        if picked:
-            opt += picked
-    if whole_week:
-        week = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos']
-    logger.info(opt)
-    session = st.session_state['id']
-    # The material files are per browser tab, and every fetcher skips a file that already
-    # exists. So a second Generate in the same tab reused the first run's Chumash, Tanya,
-    # Rambam and Hayom Yom even after the days, Rambam option or scale had changed. Start
-    # each run clean. The page fetches behind them are cached, so this costs little.
-    for stale_prefix in ("Chumash", "Tanya", "Rambam", "Hayom", "output_dynamic"):
-        try:
-            os.remove(f"{stale_prefix}{session}.pdf")
-        except FileNotFoundError:
-            pass
-    weekorder = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos']
     optorder = [name for group in st.session_state.pdf_order for name in ORDER_GROUPS[group]]  # the order picked under Print
-    daydependent = ['Chumash', 'Chumash-Bilingual', 'Tanya', 'Tanya-Bilingual', 'Tanya-English', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom', 'Hayom Yom-Hebrew', 'Hayom Yom-Bilingual']
-    chabadoptions = ['Chumash', 'Chumash-Bilingual', 'Tanya', 'Tanya-Bilingual', 'Tanya-English', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom', 'Hayom Yom-Hebrew', 'Hayom Yom-Bilingual']
-    dow = []
-    optconv = []
-    dor = []
-    opt = sorted(opt, key=optorder.index)
-    if not opt: st.error("Please select at least one material to print before generating the PDF."); st.stop()  # st.pills() returns [] when nothing selected
-    # defensively so the "week == []" checks below are guaranteed to fire correctly.
-    week = week or []
-    week = sorted(week, key=weekorder.index)
-    daytoheb(week, dow)
-    daytorambam(week, dor)
+    opt = sorted({o for picked in (chumashopts, tanyaopts, hayomopts, rambam3opts, rambam1opts, extras, shnayimopts) for o in picked or []},
+                 key=optorder.index)
 
-    opttouse(opt, optconv)
+    submit_button = st.button("Generate PDF ▶️", type="primary", use_container_width=True)
+    result_area = st.container()  # the build's progress, notes and download, right under the button
 
-    logger.info(optconv)
-    logger.info(source)
-    if week == [] and any(x in opt for x in daydependent)==True:
-        st.error("Please select at least one day of the week if trying to select Chumash, Tanya, Hayom Yom or Rambam.")
-        st.stop()
-    # Parenthesised so this only fires when no day was picked. Without them it read as
-    # "(no days and Kriah) or Maamarim or Sichos or Shnayim", which swapped the user's
-    # chosen days for Sunday whenever one of those was selected -- so a Sefaria fallback
-    # below fetched Sunday only.
-    if week == [] and ('חומש לקריאה בציבור' in optconv or 'מאמרים' in optconv or 'לקוטי שיחות' in optconv or 'Shnayim Mikra' in optconv):
-        week = ['Sunday']
-        logger.info(optconv)
-    logger.info(week)
-    if source == True:
-        if 'Chumash' in opt or 'Tanya' in opt or 'Haftorah' in opt or 'Rambam (3)-Hebrew' in opt or 'Rambam (1)-Hebrew' in opt or 'Project Likutei Sichos (Hebrew)' in opt or 'Maamarim' in opt or 'Krias Hatorah (includes Haftorah)' in opt or 'Hayom Yom-Hebrew' in opt or 'Hayom Yom-Bilingual' in opt:
-            if os.path.exists(f"dvar{session2}.pdf") == False:
-                try:
-                    with st.spinner('Attempting to download Dvar Malchus...'):
-                        dvarget(session2)
-                except Exception:
-                    logger.warning("Dvar Malchus fetch failed, falling back to Chabad.org", exc_info=True)
-                    st.write("Dvar Malchus not found. Using Chabad.org...")
-                    source = False
-                    cover = False
-        else:
-            st.write("Dvar Malchus not needed. Using Chabad.org...")
-            source = False
-            cover = False
-    rambam_requested = ('Rambam (3)-Hebrew' in opt or 'Rambam (3)-Bilingual' in opt or 'Rambam (3)-English' in opt
-                        or 'Rambam (1)-Bilingual' in opt or 'Rambam (1)-English' in opt or 'Rambam (1)-Hebrew' in opt)
-    with st.spinner('Creating PDF...'):
-        if source == False:
-            if any(o in opt for o in CHUMASH_NAMES):
-                ensure_material("Chumash", session, lambda: chabadget(dor, opt, session),
-                                 lambda: sefaria_chumash_get(week, session, opt))
-            if any(o in opt for o in TANYA_NAMES):
-                ensure_material("Tanya", session, lambda: chabadget(dor, opt, session),
-                                 lambda: sefaria_tanya_get(week, session, opt))
-            if rambam_requested:
-                ensure_material("Rambam", session, lambda: rambamenglish(dor, session, opt),
-                                 lambda: sefaria_rambam_get(week, session, opt))
-        if source == True:
-            if 'Chumash-Bilingual' in opt:
-                # As with Tanya and Rambam: the Hebrew Chumash comes from the booklet.
-                chabad_chumash_opt = ['Chumash-Bilingual']
-                ensure_material("Chumash", session, lambda: chabadget(dor, chabad_chumash_opt, session),
-                                 lambda: sefaria_chumash_get(week, session, chabad_chumash_opt))
-            if 'Tanya-Bilingual' in opt or 'Tanya-English' in opt:
-                # As with Rambam below: the Hebrew Tanya comes from the booklet, so only the
-                # English and Bilingual versions are fetched from Chabad.org.
-                chabad_tanya_opt = [o for o in opt if o in ('Tanya-Bilingual', 'Tanya-English')]
-                ensure_material("Tanya", session, lambda: chabadget(dor, chabad_tanya_opt, session),
-                                 lambda: sefaria_tanya_get(week, session, chabad_tanya_opt))
-            if 'Rambam (3)-Bilingual' in opt or 'Rambam (3)-English' in opt or 'Rambam (1)-Bilingual' in opt or 'Rambam (1)-English' in opt:
-                # The Hebrew Rambam comes from the booklet here, so leave it out of what
-                # Chabad.org is asked for. rambamenglish() takes the first Rambam option it
-                # sees, so with Hebrew + English selected it fetched the Hebrew a second
-                # time and the English never came.
-                chabad_rambam_opt = [o for o in opt if o not in ('Rambam (3)-Hebrew', 'Rambam (1)-Hebrew')]
-                ensure_material("Rambam", session, lambda: rambamenglish(dor, session, chabad_rambam_opt),
-                                 lambda: sefaria_rambam_get(week, session, chabad_rambam_opt))
-            elif ('Rambam (3)-Hebrew' in opt or 'Rambam (1)-Hebrew' in opt) and os.path.exists(f"dvar{session2}.pdf") == False:
-                ensure_material("Rambam", session, lambda: rambamenglish(dor, session, opt),
-                                 lambda: sefaria_rambam_get(week, session, opt))
+    # A recap of what the PDF will have and where each part comes from, from the same rules the
+    # build uses.
+    st.divider()
+    st.subheader("What the PDF will have")
+    shabbosim = shnayim_shabbosim(day_mode, days, week)
+    items = pdf_plan(opt, days, set(week) if source else set(), weekly_unavailable(source, day_mode, days, week), shabbosim, describe)
+    if days:
+        st.caption(f"{len(days)} day{'s' if len(days) != 1 else ''}: {describe(days)} · {len(items)} item{'s' if len(items) != 1 else ''} · "
+                   f"text {(print_size or 'Standard').lower()}, Chumash in {(chumash_layout or 'Two columns').lower()}")
+    else:
+        st.caption("No days picked yet." if day_mode != "Pick dates" else "Pick a start and an end date.")
+    for title, lines in items:
+        st.markdown(f"**{title}**  \n" + "  \n".join(lines))
+    if not opt:
+        st.caption("Pick some materials to see where each comes from.")
 
-        if any(o in opt for o in HAYOM_YOM_NAMES):
-            hayomyom(dor, dow, session, opt, source)
-
-        if 'Shnayim Mikra' in opt:
-            shnayimget(session2, parsha, opt)
-
-        dynamicmake(dow, optconv, opt, source, session)
-
-    if os.path.exists(f"output_dynamic{session}.pdf"):
-        st.success("PDF created successfully!")
-        st.balloons()
-        with open(f"output_dynamic{session}.pdf", "rb") as f:
-            st.download_button(label="Download ⬇️", data=f, file_name="Custom_Chitas.pdf", mime="application/pdf")
-
+if submit_button: # build the PDF from the choices above
+    with result_area:
+        generate(opt, day_mode, st.session_state.days, st.session_state.date_range, source, cover, sizes, chumash_columns, session2)
 
     def cleanup_stale(prefix, keep_filename, max_age):
         # Filenames are "{prefix}{timestamp}.pdf". Use an actual prefix/suffix strip
@@ -1734,17 +1701,17 @@ if submit_button: #if the user submits the form, run the following code, which w
                 except OSError:
                     logger.debug(f"Could not remove stale file {file}", exc_info=True)
 
-    cleanup_stale("Rambam", f'Rambam{session}.pdf', timedelta(minutes=1))
-    cleanup_stale("Chumash", f'Chumash{session}.pdf', timedelta(minutes=1))
-    cleanup_stale("Tanya", f'Tanya{session}.pdf', timedelta(minutes=1))
+    session = st.session_state.get('id')
     cleanup_stale("dvar", f'dvar{session2}.pdf', timedelta(hours=14))
-    cleanup_stale("Shnayim", f'Shnayim{session2}.pdf', timedelta(hours=14))
     cleanup_stale("output_dynamic", f'output_dynamic{session}.pdf', timedelta(minutes=1))
+    # The app no longer writes these per-material files; clear any an older version left behind.
+    for prefix in ("Chumash", "Tanya", "Rambam", "Hayom", "Shnayim", "temp"):
+        cleanup_stale(prefix, None, timedelta(minutes=1))
 st.markdown("**Any major bugs noticed? Features that you'd like to see? Comments? Email me [📧 here!](mailto:mkievman@outlook.com)**", unsafe_allow_html=True)
 
 if not submit_button:
     with st.expander("**Changelog:**"):
-        st.markdown("**New in latest update (11-5-26)**: <br/> **[FIX]** Rambam in Hebrew (3 chapters and 1 chapter) was missing from PDFs made from Dvar Malchus for the last few weeks, because the booklet changed how it writes רמב״ם in its titles. It is back. <br/> **[FIX]** Chumash and Tanya no longer fall back to estimated page ranges when a day starts at the very top of a page, or when the booklet's Tanya bookmark points to the wrong page. This week that had added most of Tanya to the end of Chumash for Shabbos. <br/> **[NEW]** If a section you picked can't be found in this week's Dvar Malchus, the app now tells you, instead of quietly leaving it out. <br/> **[FIX]** Maamarim are back. For most weeks since the summer the booklet has titled that section מאמרים instead of מאמר, so the app found nothing and left them out of the PDF. <br/> **[FIX]** The Haftorah no longer prints twice. In some weeks, this one included, it came out twice. <br/> **[FIX]** Krias Hatorah now ends on the right page. Some weeks it cut off the last page of the Haftorah or added a page of the Shabbos Mincha reading. <br/> **[FIX]** Shnayim Mikra no longer crashes the app in weeks when Shabbos is Yom Tov, and it now works for אחרי מות-קדושים and נצבים-וילך. <br/> **[FIX]** Making a second PDF in the same tab with different days or options no longer reuses the Chumash, Tanya, Rambam or Hayom Yom from the first one. <br/> **[FIX]** Picking a Hebrew Rambam together with an English or Bilingual one now gives you both, instead of the Hebrew twice. <br/> **[NEW]** If Likutei Sichos, Krias Hatorah, the Haftorah or Shnayim Mikra can't be found, or you pick something that only comes from Dvar Malchus while it isn't being used, the app now tells you. <br/> **[NEW]** Chumash with Rashi, Tanya, Rambam and Hayom Yom from Chabad.org are back, in a new print layout: Hebrew with full cantillation, Bilingual Rambam side by side, and a header on each day with the English and Hebrew date and the portion. Chabad.org's daily study pages had started blocking the app, so these were coming from Sefaria instead, and Hayom Yom, which only Chabad.org has, was missing from every PDF. They now come from Chabad.org's online library and take a second or two instead of minutes. <br/> **[NEW]** Tanya now has its own row, like Rambam: Hebrew, Bilingual (side by side) and English. The English is Lessons in Tanya, with its explanation printed in gray so the translation stands out. <br/> **[NEW]** Chumash now has its own row too: Hebrew, and Bilingual (English and Hebrew side by side, each with its Rashi). From Chabad.org each pasuk is followed by its Rashi, in block letters, and the Hebrew prints in two columns, which takes about a quarter fewer pages. <br/> **[CHANGE]** English and Bilingual Rambam leave out the translator's footnotes, which more than doubled the length of a day's printout. <br/> **[NEW]** You can now pick more than one Rambam option from Chabad.org; each is included. Before, only the first one came through. <br/> **[NEW]** A clearer form: pick the days (or the whole week), then each material's languages (Hebrew, Bilingual, English), then the weekly items, then how it prints. <br/> **[NEW]** Text size presets: Compact, Standard and Large, or Custom sizes per material under Advanced options. <br/> **[NEW]** Hebrew Chumash can print in one column or two. <br/> **[NEW]** Hayom Yom in Hebrew and Bilingual, from this week's Dvar Malchus (the Hebrew isn't available from Chabad.org). Hebrew is the booklet's own pages; Bilingual sets the booklet's Hebrew next to Chabad.org's English.", unsafe_allow_html=True)
+        st.markdown("**New in latest update (11-5-26)**: <br/> **[NEW]** Pick dates: make a PDF for any dates, up to 60 days, not just this week. Chitas Collator is now part of Dvar Creator. Hebrew comes from Dvar Malchus for the days in its week and from Chabad.org for the others. <br/> **[NEW]** A summary under Generate shows what the PDF will have and where each part comes from. <br/> **[FIX]** Days from Chabad.org now match this week's Dvar Malchus. Later in the week, picking Sunday gave this Sunday's Hebrew from Dvar Malchus but next Sunday's Bilingual or English from Chabad.org. <br/> **[CHANGE]** A day or section that can't be found in Dvar Malchus now comes from Chabad.org instead of being left out. If Chabad.org fails for some days, only those days come from Sefaria. <br/> **[NEW]** With Pick dates, Shnayim Mikra has the parsha of each week your dates touch. <br/> **[FIX]** Downloading the PDF no longer clears it from the page. <br/> **[FIX]** Shabbos's Chumash from Dvar Malchus no longer ends with the booklet's לוח תהלים page. <br/> **[FIX]** Rambam in Hebrew (3 chapters and 1 chapter) was missing from PDFs made from Dvar Malchus for the last few weeks, because the booklet changed how it writes רמב״ם in its titles. It is back. <br/> **[FIX]** Chumash and Tanya no longer fall back to estimated page ranges when a day starts at the very top of a page, or when the booklet's Tanya bookmark points to the wrong page. This week that had added most of Tanya to the end of Chumash for Shabbos. <br/> **[NEW]** If a section you picked can't be found in this week's Dvar Malchus, the app now tells you, instead of quietly leaving it out. <br/> **[FIX]** Maamarim are back. For most weeks since the summer the booklet has titled that section מאמרים instead of מאמר, so the app found nothing and left them out of the PDF. <br/> **[FIX]** The Haftorah no longer prints twice. In some weeks, this one included, it came out twice. <br/> **[FIX]** Krias Hatorah now ends on the right page. Some weeks it cut off the last page of the Haftorah or added a page of the Shabbos Mincha reading. <br/> **[FIX]** Shnayim Mikra no longer crashes the app in weeks when Shabbos is Yom Tov, and it now works for אחרי מות-קדושים and נצבים-וילך. <br/> **[FIX]** Making a second PDF in the same tab with different days or options no longer reuses the Chumash, Tanya, Rambam or Hayom Yom from the first one. <br/> **[FIX]** Picking a Hebrew Rambam together with an English or Bilingual one now gives you both, instead of the Hebrew twice. <br/> **[NEW]** If Likutei Sichos, Krias Hatorah, the Haftorah or Shnayim Mikra can't be found, or you pick something that only comes from Dvar Malchus while it isn't being used, the app now tells you. <br/> **[NEW]** Chumash with Rashi, Tanya, Rambam and Hayom Yom from Chabad.org are back, in a new print layout: Hebrew with full cantillation, Bilingual Rambam side by side, and a header on each day with the English and Hebrew date and the portion. Chabad.org's daily study pages had started blocking the app, so these were coming from Sefaria instead, and Hayom Yom, which only Chabad.org has, was missing from every PDF. They now come from Chabad.org's online library and take a second or two instead of minutes. <br/> **[NEW]** Tanya now has its own row, like Rambam: Hebrew, Bilingual (side by side) and English. The English is Lessons in Tanya, with its explanation printed in gray so the translation stands out. <br/> **[NEW]** Chumash now has its own row too: Hebrew, and Bilingual (English and Hebrew side by side, each with its Rashi). From Chabad.org each pasuk is followed by its Rashi, in block letters, and the Hebrew prints in two columns, which takes about a quarter fewer pages. <br/> **[CHANGE]** English and Bilingual Rambam leave out the translator's footnotes, which more than doubled the length of a day's printout. <br/> **[NEW]** You can now pick more than one Rambam option from Chabad.org; each is included. Before, only the first one came through. <br/> **[NEW]** A clearer form: pick the days (or the whole week), then each material's languages (Hebrew, Bilingual, English), then the weekly items, then how it prints. <br/> **[NEW]** Text size presets: Compact, Standard and Large, or Custom sizes per material under Advanced options. <br/> **[NEW]** Hebrew Chumash can print in one column or two. <br/> **[NEW]** Hayom Yom in Hebrew and Bilingual, from this week's Dvar Malchus (the Hebrew isn't available from Chabad.org). Hebrew is the booklet's own pages; Bilingual sets the booklet's Hebrew next to Chabad.org's English.", unsafe_allow_html=True)
         st.markdown("**Past Changes (7-19-26)**: <br/> **[FIX]** Days taken from Dvar Malchus now include their full shiur. Because a day's learning ends partway down a page rather than at a page break, the app used to cut some days short or add a page of the next day — Tanya was losing the end of most days every week. Day boundaries are now found on the page itself instead of being estimated. <br/> **[NEW]** Rambam (1 chapter) in Hebrew now comes from Dvar Malchus like the 3-chapter cycle, instead of always falling back to Chabad.org. <br/> **[FIX]** Selecting more than one Rambam option at once no longer repeats the same section twice. <br/> **[NEW]** Dvar Malchus downloads are much faster (a couple of seconds instead of around forty) — the app now fetches the booklet directly rather than driving a browser, falling back to the old method if needed.", unsafe_allow_html=True)
         st.markdown("**Past Changes (7-3-26)**: <br/> **[FIX]** Fixed a crash when two people generated a booklet from Dvar Malchus at nearly the same time. <br/> **[NEW]** Modernized the app's dependencies (Streamlit and others) and swapped out a few unmaintained UI components for Streamlit's own native ones. <br/> **[NEW]** Added a custom dark theme. <br/> **[NEW]** Chumash/Tanya/Rambam/Hayom Yom fetches are now shared across everyone requesting the same day, so repeat generations are faster and put less load on Chabad.org.", unsafe_allow_html=True)
         st.markdown("**Past Changes (7-2-26)**: <br/> **[FIX]** Dvar Malchus downloads were silently failing in headless mode; fixed by explicitly allowing Chrome to save the file. <br/> **[FIX]** Chabad.org's daily study pages had started intermittently failing (an anti-bot check); fetches now retry automatically with a fresh session before giving up. <br/> **[NEW]** Added Sefaria as a 3rd fallback source for Chumash (with Rashi), Tanya, and Rambam if both Dvar Malchus and Chabad.org are unavailable, including correct handling of combined/double-parsha weeks. <br/> **[FIX]** Bilingual Rambam now shows Hebrew and English side by side instead of one after the other. <br/> **[FIX]** A single Chabad.org or Sefaria hiccup on one material no longer crashes the whole app.", unsafe_allow_html=True)
