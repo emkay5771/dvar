@@ -635,14 +635,32 @@ def parshaget(date1): #get parsha from date for shnayim mikra
     return parsha
 
 SHNAYIM_REPO_RAW_BASE = "https://raw.githubusercontent.com/emkay5771/shnayimfiles/master"
+# Weeks where the shnayimfiles repo spells the file differently from pyluach's name.
+SHNAYIM_FILE_ALIASES = {
+    'אחרי מות, קדושים': 'אחרי, קדושים',
+}
+
+def _shnayim_download(name):
+    url = f"{SHNAYIM_REPO_RAW_BASE}/{requests.utils.quote(name)}.pdf"
+    response = requests.get(url, timeout=20)
+    response.raise_for_status()
+    if not response.content.startswith(b"%PDF"):
+        raise ValueError(f"{url} did not return a PDF")
+    return response.content
 
 def shnayimget(session2, parsha, opt): #get shnayim mikra from github repo
     if 'Shnayim Mikra' not in opt:
         return
+    if not parsha:
+        # pyluach has no parsha when this Shabbos is Yom Tov (Pesach, Shavuos, Sukkos...).
+        # This used to crash on None.split() below and take the whole PDF down with it.
+        logger.info("No weekly parsha this Shabbos; skipping Shnayim Mikra")
+        st.warning("This Shabbos is Yom Tov, so there is no weekly parsha and no Shnayim Mikra in this PDF.")
+        return
     # filename2 intentionally keeps whatever pyluach returned verbatim (including the
     # comma pyluach puts between double-parsha names, e.g. "מטות, מסעי") because the
     # files in the shnayimfiles repo are named that way too.
-    filename2 = " ".join(parsha.split(" "))
+    filename2 = SHNAYIM_FILE_ALIASES.get(parsha, " ".join(parsha.split(" ")))
     logger.info(f"Shnayim Mikra parsha file: {filename2}")
 
     # Shnayim{session2}.pdf is a cross-user cache (same file for everyone each week),
@@ -651,18 +669,30 @@ def shnayimget(session2, parsha, opt): #get shnayim mikra from github repo
         if os.path.exists(f"Shnayim{session2}.pdf"):
             logger.info("Shnayim%s.pdf already fetched by another session, reusing it", session2)
             return
-        url = f"{SHNAYIM_REPO_RAW_BASE}/{requests.utils.quote(filename2)}.pdf"
         try:
-            response = requests.get(url, timeout=20)
-            response.raise_for_status()
-            if not response.content.startswith(b"%PDF"):
-                raise ValueError("downloaded file does not look like a PDF")
+            content = _shnayim_download(filename2)
         except Exception:
-            logger.warning(f"Could not fetch Shnayim Mikra for '{filename2}' from {url}", exc_info=True)
+            logger.warning(f"Could not fetch Shnayim Mikra for '{filename2}'", exc_info=True)
+            content = None
+            parts = [part.strip() for part in filename2.split(",")]
+            if len(parts) > 1:
+                # Some combined weeks (e.g. נצבים, וילך) only exist in the repo as one file
+                # per parsha, so join those instead.
+                try:
+                    merged = fitz.open()
+                    for part in parts:
+                        merged.insert_pdf(fitz.open(stream=_shnayim_download(part), filetype="pdf"))
+                    content = merged.tobytes()
+                    logger.info(f"Built Shnayim Mikra for '{filename2}' from {parts}")
+                except Exception:
+                    logger.warning(f"Could not build Shnayim Mikra for '{filename2}' from {parts}", exc_info=True)
+                    content = None
+        if content is None:
+            st.warning(f"Couldn't find Shnayim Mikra for {parsha}, so it is not in this PDF.")
             return
         tmp_path = f"Shnayim{session2}.pdf.tmp"
         with open(tmp_path, "wb") as f:
-            f.write(response.content)
+            f.write(content)
         os.replace(tmp_path, f"Shnayim{session2}.pdf")
         logger.info(f"Saved Shnayim{session2}.pdf")
 
@@ -730,6 +760,82 @@ def find_next_top_level_bookmark(toc, current_index, last_page):
     # Returning None here used to flow straight into insert_pdf(to_page=None), which
     # raises instead of meaning "to the end" -- so hand back the real last page.
     return last_page
+
+def _booklet_earliest_page(toc, index):
+    # The earliest 1-based page among a top-level bookmark and its own sub-bookmarks. The
+    # publisher's top-level bookmarks have pointed past the real section start before
+    # (תניא יומי -> 86 when Tanya starts on 78), while the sub-bookmarks under it were right.
+    pages = [toc[index][2]]
+    for sub in toc[index + 1:]:
+        if sub[0] == 1:
+            break
+        pages.append(sub[2])
+    return min(page for page in pages if page > 0)
+
+def booklet_maamarim_pages(toc, last_page):
+    # Returns (first page, last page) as inclusive 0-based indexes, or None if the booklet
+    # has no maamarim section. The section's top-level bookmark has had three names:
+    # 'מאמר - ד"ה ...', 'מאמר דא"ח' and, nearly every week since mid-2026, 'מאמרים'. The old
+    # check looked for the exact word 'מאמר', so the plural matched nothing and the maamar
+    # quietly dropped out of the PDF. Match a top-level title whose first word starts with
+    # 'מאמר' instead. Staying at the top level keeps out 'ספר המאמרים תרפ״ט', which is a
+    # sub-bookmark in the רבותינו נשיאי חב״ד section near the back of the booklet.
+    for i, (level, title, page) in enumerate(toc):
+        words = _booklet_normalize(title).split()
+        if level != 1 or page <= 0 or not words or not words[0].startswith('מאמר'):
+            continue
+        start = _booklet_earliest_page(toc, i) - 1
+        next_index = next((j for j in range(i + 1, len(toc)) if toc[j][0] == 1 and toc[j][2] > 0), None)
+        end = last_page if next_index is None else _booklet_earliest_page(toc, next_index) - 2
+        return (start, min(max(end, start), last_page))
+    return None
+
+BOOKLET_KRIAH_TITLE = 'חומש לקריאה בציבור'
+# Footer of the Shabbos Mincha reading, which follows the Kriah (קריאת התורה למנחת שבת קודש).
+BOOKLET_MINCHA_FOOTER = 'מנחת שבת'
+# Text on the Maftir page (and sometimes the page after it) where the Haftorah begins. The
+# second string is how pypdf extracts the booklet's legacy-encoded Hebrew.
+BOOKLET_HAFTORAH_MARKERS = ("ברכת הפטורה", "xtd enk dxhtdd renyl")
+
+def _booklet_footer_names(doc, page_number, name):
+    # Every booklet page names its section in the footer, next to the page number. The
+    # text often comes out of the PDF reversed ("רוביצב האירקל שמוח"), so check both ways.
+    rect = doc[page_number].rect
+    footer = _booklet_normalize(doc[page_number].get_text(
+        clip=fitz.Rect(0, rect.height - BOOKLET_FOOTER_MARGIN, rect.width, rect.height)))
+    return name in footer or name in footer[::-1]
+
+def booklet_kriah_pages(doc, toc):
+    # Returns (first page, last page) of the Torah reading section as inclusive 0-based
+    # indexes, or None if this booklet has none (Yom Tov weeks). The end used to be the
+    # next bookmark minus a fixed 3 pages, which assumed exactly one page of Mincha reading
+    # sits after the Kriah with no bookmark of its own. Across 20 booklets that dropped the
+    # last Haftorah page when Mincha had its own bookmark, and printed a Mincha page when
+    # Mincha ran to two pages. So run to the page before the next bookmark and trim the
+    # Mincha pages off the end by their footer. Trim by the Mincha footer rather than keep
+    # by the Kriah one: the publisher sometimes mislabels Kriah footers (one booklet had
+    # נקודה משיחות קודש on eight Kriah pages), but the Mincha pages have been labeled right.
+    for i, (level, title, page) in enumerate(toc):
+        if level != 1 or page <= 0 or _booklet_title_key(title) != _booklet_title_key(BOOKLET_KRIAH_TITLE):
+            continue
+        start = _booklet_earliest_page(toc, i) - 1
+        next_index = next((j for j in range(i + 1, len(toc)) if toc[j][0] == 1 and toc[j][2] > 0), None)
+        end = doc.page_count - 1 if next_index is None else _booklet_earliest_page(toc, next_index) - 2
+        while end > start and _booklet_footer_names(doc, end, BOOKLET_MINCHA_FOOTER):
+            end -= 1
+        return (start, max(end, start))
+    return None
+
+def booklet_haftorah_start(pdf_path, first_page, last_page):
+    # The first page of the Kriah section that carries a Haftorah marker. Only the first:
+    # the marker is often on two pages in a row, and the old loop inserted from each of
+    # them, so the Haftorah came out twice.
+    reader = PyPDF2.PdfReader(pdf_path)
+    for page_num in range(first_page, last_page + 1):
+        text = reader.pages[page_num].extract_text() or ""
+        if any(marker in text for marker in BOOKLET_HAFTORAH_MARKERS):
+            return page_num
+    return None
 
 # --- Dvar Malchus day boundaries -------------------------------------------------------
 # A day's shiur in the booklet does not stop at a page break: it runs partway down the
@@ -1056,9 +1162,7 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
             logger.warning("Something went wrong opening Dvar Malchus PDF, falling back to Chabad.org", exc_info=True)
             st.write("Something went wrong with Dvar Malchus. Attempting to use Chabad.org.")
             logger.info(opt)
-            if all(option not in chabadoptions for option in opt) and any(option in opt for option in ['Project Likutei Sichos', 'Maamarim', 'Haftorah']):
-                st.error("Project Likutei Sichos, the Haftorah, and Maamarim are not available from Chabad.org. Please try again.")
-                st.stop()
+            # The booklet-only options are reported by the Chabad.org branch below.
             source = False
             if 'Chumash' in opt:
                 ensure_material("Chumash", session, lambda: chabadget(dor, opt, session),
@@ -1077,6 +1181,16 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
     if source == False:
             logger.info("Chabad.org")
             logger.info(opt)
+            # These only exist in Dvar Malchus. The old check listed 'Project Likutei Sichos'
+            # without "(Hebrew)", so it never matched that option, and when they were mixed
+            # with Chabad.org materials they were dropped without a word.
+            booklet_only = [o for o in opt if o in ('Project Likutei Sichos (Hebrew)', 'Maamarim', 'Haftorah', 'Krias Hatorah (includes Haftorah)')]
+            if booklet_only and len(booklet_only) == len(opt):
+                st.error("Project Likutei Sichos, Kriah, the Haftorah, and Maamarim are not available from Chabad.org. Please try again.")
+                st.stop()
+            if booklet_only:
+                st.warning(f"Dvar Malchus wasn't used for this PDF, and {', '.join(booklet_only)} only come from there, "
+                           "so they are not in it.")
             for option in opt:
                 if option == 'Chumash':
                     append_material(doc_out, f"Chumash{session}.pdf", "Chumash")
@@ -1090,10 +1204,7 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
                     append_material(doc_out, f"Hayom{session}.pdf", "Hayom Yom")
                 elif option == 'Shnayim Mikra':
                     append_material(doc_out, f"Shnayim{session2}.pdf", "Shnayim Mikra")
-                if all(option not in chabadoptions for option in opt) and any(option in opt for option in ['Project Likutei Sichos', 'Maamarim', 'Haftorah', 'Krias Hatorah (includes Haftorah)']):
-                    st.error("Project Likutei Sichos, Kriah, the Haftorah, and Maamarim are not available from Chabad.org. Please try again.")
-                    st.stop()
-                
+
     else:
         for q in optconv:
             # Day ranges are resolved once per section rather than once per selected day,
@@ -1123,44 +1234,52 @@ def dynamicmake(dow, optconv, opt, source, session): #compiles pdf after collect
                         continue
                     doc_out.insert_pdf(doc, from_page=start_page, to_page=end_page) #type: ignore
 
-            if q == 'חומש לקריאה בציבור' or q == 'מאמרים' or q == 'לקוטי שיחות':
+            if q == 'מאמרים':
+                maamarim = booklet_maamarim_pages(toc, doc.page_count - 1) #type: ignore
+                if maamarim is None:
+                    logger.warning("Maamarim section not found in the Dvar Malchus bookmarks")
+                    st.warning("Couldn't find the Maamarim in this week's Dvar Malchus, so they are not in this PDF.")
+                else:
+                    logger.debug(f"Maamarim found: pages {maamarim[0]}-{maamarim[1]}")
+                    doc_out.insert_pdf(doc, from_page=maamarim[0], to_page=maamarim[1]) #type: ignore
+
+            if q == 'לקוטי שיחות':
+                sichos_found = False
                 for i, item in enumerate(toc): #type: ignore
-                    if q == 'לקוטי שיחות':
-                        for word in item[1].split():
-                            if word == 'לקוטי' and item[1].split()[item[1].split().index(word) + 1] == 'שיחות':
-                                logger.debug("Likutei Sichos found")
-                                with open(f"dvar{session2}.pdf", "rb") as pdf_file:
-                                    pdf_reader = PyPDF2.PdfReader(pdf_file)
-                                    page_num_start = item[2] - 1
-                                    page_num_end = find_next_top_level_bookmark(toc, i, doc.page_count - 1) #type: ignore
-                                    doc_out.insert_pdf(doc, from_page=page_num_start, to_page=page_num_end) #type: ignore
-                    if q == 'מאמרים':
-                        for word in item[1].split():
-                            if word == 'מאמר':
-                                logger.debug("Maamarim found")
-                                with open(f"dvar{session2}.pdf", "rb") as pdf_file:
-                                    pdf_reader = PyPDF2.PdfReader(pdf_file)
-                                    page_num_start = item[2] - 1
-                                    page_num_end = find_next_top_level_bookmark(toc, i, doc.page_count - 1) #type: ignore
-                                    doc_out.insert_pdf(doc, from_page=page_num_start, to_page=page_num_end) #type: ignore
-                    if item[1] == 'חומש לקריאה בציבור' and q == 'חומש לקריאה בציבור':
-                        with open(f"dvar{session2}.pdf", "rb") as pdf_file:
-                            pdf_reader = PyPDF2.PdfReader(pdf_file)
-                            page_num_start = item[2] - 1
-                            page_num_end = toc[i+1][2] - 3 #type: ignore
-                            logger.debug("Torah reading found")
-                            if "Krias Hatorah (includes Haftorah)" in opt and kriahattatch == False:
-                                logger.debug("Kriah found")
-                                doc_out.insert_pdf(doc, from_page=page_num_start, to_page=page_num_end)
-                                kriahattatch = True
-                            elif 'Haftorah' in opt and 'Krias Hatorah (includes Haftorah)' not in opt:
-                                for page_num in range(page_num_start, page_num_end):
-                                    logger.debug("Haftorah found")
-                                    page = pdf_reader.pages[page_num]
-                                    text = page.extract_text()
-                                    if "ברכת הפטורה" in text or "xtd enk dxhtdd renyl" in text:
-                                        doc_out.insert_pdf(doc, from_page=page_num, to_page=page_num_end) #type: ignore
-                                        continue
+                    words = item[1].split()
+                    # words[n + 1:n + 2] rather than words[n + 1], so a title that ends in
+                    # 'לקוטי' can't raise IndexError.
+                    if any(word == 'לקוטי' and words[n + 1:n + 2] == ['שיחות'] for n, word in enumerate(words)):
+                        logger.debug("Likutei Sichos found")
+                        sichos_found = True
+                        page_num_start = item[2] - 1
+                        page_num_end = find_next_top_level_bookmark(toc, i, doc.page_count - 1) #type: ignore
+                        doc_out.insert_pdf(doc, from_page=page_num_start, to_page=page_num_end) #type: ignore
+                if not sichos_found:
+                    logger.warning("Likutei Sichos section not found in the Dvar Malchus bookmarks")
+                    st.warning("Couldn't find Likutei Sichos in this week's Dvar Malchus, so it is not in this PDF.")
+
+            # opttouse() maps both Kriah and Haftorah to this title, so it can come up twice;
+            # kriahattatch makes sure the section is only added once.
+            if q == 'חומש לקריאה בציבור' and not kriahattatch:
+                kriahattatch = True
+                kriah = booklet_kriah_pages(doc, toc) #type: ignore
+                if kriah is None:
+                    logger.warning("Krias Hatorah section not found in the Dvar Malchus bookmarks")
+                    st.warning("Couldn't find Krias Hatorah in this week's Dvar Malchus (Yom Tov booklets may not have it), "
+                               "so the Kriah and Haftorah are not in this PDF.")
+                elif "Krias Hatorah (includes Haftorah)" in opt:
+                    logger.debug(f"Kriah found: pages {kriah[0]}-{kriah[1]}")
+                    doc_out.insert_pdf(doc, from_page=kriah[0], to_page=kriah[1]) #type: ignore
+                else:
+                    haftorah_start = booklet_haftorah_start(f"dvar{session2}.pdf", kriah[0], kriah[1])
+                    if haftorah_start is None:
+                        logger.warning("Haftorah start not found in pages %d-%d", kriah[0], kriah[1])
+                        st.warning("Couldn't find where the Haftorah starts in this week's Dvar Malchus, so it is not in this PDF. "
+                                   "Try Krias Hatorah instead, which includes the Haftorah.")
+                    else:
+                        logger.debug(f"Haftorah found: pages {haftorah_start}-{kriah[1]}")
+                        doc_out.insert_pdf(doc, from_page=haftorah_start, to_page=kriah[1]) #type: ignore
 
             if 'Rambam' in q:
                 # Only the non-Hebrew Rambam variants reach here as raw option strings;
@@ -1243,6 +1362,15 @@ if submit_button: #if the user submits the form, run the following code, which w
         opt += extras
     logger.info(opt)
     session = st.session_state['id']
+    # The material files are per browser tab, and every fetcher skips a file that already
+    # exists. So a second Generate in the same tab reused the first run's Chumash, Tanya,
+    # Rambam and Hayom Yom even after the days, Rambam option or scale had changed. Start
+    # each run clean. The page fetches behind them are cached, so this costs little.
+    for stale_prefix in ("Chumash", "Tanya", "Rambam", "Hayom", "output_dynamic"):
+        try:
+            os.remove(f"{stale_prefix}{session}.pdf")
+        except FileNotFoundError:
+            pass
     weekorder = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Shabbos']
     optorder = ['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom', 'Project Likutei Sichos (Hebrew)', 'Maamarim', 'Haftorah', 'Krias Hatorah (includes Haftorah)', 'Shnayim Mikra']
     daydependent = ['Chumash', 'Tanya', 'Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English', 'Rambam (1)-Hebrew', 'Rambam (1)-Bilingual', 'Rambam (1)-English', 'Hayom Yom']
@@ -1265,7 +1393,11 @@ if submit_button: #if the user submits the form, run the following code, which w
     if week == [] and any(x in opt for x in daydependent)==True:
         st.error("Please select at least one day of the week if trying to select anything from the 'Basics' or 'Rambam' sections.")
         st.stop()
-    if week == [] and 'חומש לקריאה בציבור' in optconv or 'מאמרים' in optconv or 'לקוטי שיחות' in optconv or 'Shnayim Mikra' in optconv:
+    # Parenthesised so this only fires when no day was picked. Without them it read as
+    # "(no days and Kriah) or Maamarim or Sichos or Shnayim", which swapped the user's
+    # chosen days for Sunday whenever one of those was selected -- so a Sefaria fallback
+    # below fetched Sunday only.
+    if week == [] and ('חומש לקריאה בציבור' in optconv or 'מאמרים' in optconv or 'לקוטי שיחות' in optconv or 'Shnayim Mikra' in optconv):
         week = ['Sunday']
         logger.info(optconv)
     logger.info(week)
@@ -1299,8 +1431,13 @@ if submit_button: #if the user submits the form, run the following code, which w
                                  lambda: sefaria_rambam_get(week, session, opt))
         if source == True:
             if 'Rambam (3)-Bilingual' in opt or 'Rambam (3)-English' in opt or 'Rambam (1)-Bilingual' in opt or 'Rambam (1)-English' in opt:
-                ensure_material("Rambam", session, lambda: rambamenglish(dor, session, opt),
-                                 lambda: sefaria_rambam_get(week, session, opt))
+                # The Hebrew Rambam comes from the booklet here, so leave it out of what
+                # Chabad.org is asked for. rambamenglish() takes the first Rambam option it
+                # sees, so with Hebrew + English selected it fetched the Hebrew a second
+                # time and the English never came.
+                chabad_rambam_opt = [o for o in opt if o not in ('Rambam (3)-Hebrew', 'Rambam (1)-Hebrew')]
+                ensure_material("Rambam", session, lambda: rambamenglish(dor, session, chabad_rambam_opt),
+                                 lambda: sefaria_rambam_get(week, session, chabad_rambam_opt))
             elif ('Rambam (3)-Hebrew' in opt or 'Rambam (1)-Hebrew' in opt) and os.path.exists(f"dvar{session2}.pdf") == False:
                 ensure_material("Rambam", session, lambda: rambamenglish(dor, session, opt),
                                  lambda: sefaria_rambam_get(week, session, opt))
@@ -1349,7 +1486,7 @@ st.markdown("**Any major bugs noticed? Features that you'd like to see? Comments
 
 if not submit_button:
     with st.expander("**Changelog:**"):
-        st.markdown("**New in latest update (11-5-26)**: <br/> **[FIX]** Rambam in Hebrew (3 chapters and 1 chapter) was missing from PDFs made from Dvar Malchus for the last few weeks, because the booklet changed how it writes רמב״ם in its titles. It is back. <br/> **[FIX]** Chumash and Tanya no longer fall back to estimated page ranges when a day starts at the very top of a page, or when the booklet's Tanya bookmark points to the wrong page. This week that had added most of Tanya to the end of Chumash for Shabbos. <br/> **[NEW]** If a section you picked can't be found in this week's Dvar Malchus, the app now tells you, instead of quietly leaving it out.", unsafe_allow_html=True)
+        st.markdown("**New in latest update (11-5-26)**: <br/> **[FIX]** Rambam in Hebrew (3 chapters and 1 chapter) was missing from PDFs made from Dvar Malchus for the last few weeks, because the booklet changed how it writes רמב״ם in its titles. It is back. <br/> **[FIX]** Chumash and Tanya no longer fall back to estimated page ranges when a day starts at the very top of a page, or when the booklet's Tanya bookmark points to the wrong page. This week that had added most of Tanya to the end of Chumash for Shabbos. <br/> **[NEW]** If a section you picked can't be found in this week's Dvar Malchus, the app now tells you, instead of quietly leaving it out. <br/> **[FIX]** Maamarim are back. For most weeks since the summer the booklet has titled that section מאמרים instead of מאמר, so the app found nothing and left them out of the PDF. <br/> **[FIX]** The Haftorah no longer prints twice. In some weeks, this one included, it came out twice. <br/> **[FIX]** Krias Hatorah now ends on the right page. Some weeks it cut off the last page of the Haftorah or added a page of the Shabbos Mincha reading. <br/> **[FIX]** Shnayim Mikra no longer crashes the app in weeks when Shabbos is Yom Tov, and it now works for אחרי מות-קדושים and נצבים-וילך. <br/> **[FIX]** Making a second PDF in the same tab with different days or options no longer reuses the Chumash, Tanya, Rambam or Hayom Yom from the first one. <br/> **[FIX]** Picking a Hebrew Rambam together with an English or Bilingual one now gives you both, instead of the Hebrew twice. <br/> **[NEW]** If Likutei Sichos, Krias Hatorah, the Haftorah or Shnayim Mikra can't be found, or you pick something that only comes from Dvar Malchus while it isn't being used, the app now tells you.", unsafe_allow_html=True)
         st.markdown("**Past Changes (7-19-26)**: <br/> **[FIX]** Days taken from Dvar Malchus now include their full shiur. Because a day's learning ends partway down a page rather than at a page break, the app used to cut some days short or add a page of the next day — Tanya was losing the end of most days every week. Day boundaries are now found on the page itself instead of being estimated. <br/> **[NEW]** Rambam (1 chapter) in Hebrew now comes from Dvar Malchus like the 3-chapter cycle, instead of always falling back to Chabad.org. <br/> **[FIX]** Selecting more than one Rambam option at once no longer repeats the same section twice. <br/> **[NEW]** Dvar Malchus downloads are much faster (a couple of seconds instead of around forty) — the app now fetches the booklet directly rather than driving a browser, falling back to the old method if needed.", unsafe_allow_html=True)
         st.markdown("**Past Changes (7-3-26)**: <br/> **[FIX]** Fixed a crash when two people generated a booklet from Dvar Malchus at nearly the same time. <br/> **[NEW]** Modernized the app's dependencies (Streamlit and others) and swapped out a few unmaintained UI components for Streamlit's own native ones. <br/> **[NEW]** Added a custom dark theme. <br/> **[NEW]** Chumash/Tanya/Rambam/Hayom Yom fetches are now shared across everyone requesting the same day, so repeat generations are faster and put less load on Chabad.org.", unsafe_allow_html=True)
         st.markdown("**Past Changes (7-2-26)**: <br/> **[FIX]** Dvar Malchus downloads were silently failing in headless mode; fixed by explicitly allowing Chrome to save the file. <br/> **[FIX]** Chabad.org's daily study pages had started intermittently failing (an anti-bot check); fetches now retry automatically with a fresh session before giving up. <br/> **[NEW]** Added Sefaria as a 3rd fallback source for Chumash (with Rashi), Tanya, and Rambam if both Dvar Malchus and Chabad.org are unavailable, including correct handling of combined/double-parsha weeks. <br/> **[FIX]** Bilingual Rambam now shows Hebrew and English side by side instead of one after the other. <br/> **[FIX]** A single Chabad.org or Sefaria hiccup on one material no longer crashes the whole app.", unsafe_allow_html=True)
