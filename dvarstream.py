@@ -295,14 +295,16 @@ def rambamenglish(dor, session, opt): # all Rambam versions from chabad.org
     if sections:
         _chabad_pdf("rambam", sections, scale2, f"Rambam{session}.pdf")
 
-def hayomyom(dor, dow, session, opt, source): # Hayom Yom: English from chabad.org, Hebrew from the booklet
-    # No other source has Hayom Yom, so a day that fails is skipped with a warning rather
-    # than losing the whole week. Every option picked goes into the one Hayom Yom file.
+def hayomyom(dor, dow, session, opt, source): # Hayom Yom: Hebrew from the booklet, English from chabad.org
+    # Hebrew is the booklet's own pages, as for the other Hebrew materials; a page can carry
+    # the neighbouring days too. Bilingual pairs the booklet's Hebrew text with Chabad.org's
+    # English, and English comes from Chabad.org. No other source has Hayom Yom, so a day that
+    # fails is skipped with a warning rather than losing the whole week. Everything picked
+    # goes into the one Hayom Yom file, in that order.
     if os.path.exists(f"Hayom{session}.pdf"):
         return
-    sections = []
-    booklet_languages = [language for name, language in (("Hayom Yom-Hebrew", "he"), ("Hayom Yom-Bilingual", "both")) if name in opt]
-    if booklet_languages:
+    booklet_pages, sections = [], []
+    if "Hayom Yom-Hebrew" in opt or "Hayom Yom-Bilingual" in opt:
         days = None
         if source and os.path.exists(f"dvar{session2}.pdf"):
             try:
@@ -315,18 +317,25 @@ def hayomyom(dor, dow, session, opt, source): # Hayom Yom: English from chabad.o
                        "and Bilingual Hayom Yom are not in it. To include them, turn on 'Use Dvar Malchus when possible'.")
         else:
             by_weekday = {found["weekday"]: found for found in days}
-            try:
-                week_dates = chabad_texts.booklet_week_dates(days, date.today())
-            except Exception:
-                logger.warning("Couldn't date the booklet's Hayom Yom", exc_info=True)
-                week_dates = {}
-            for language in booklet_languages:
+            missing = [weekday for weekday in dow if weekday not in by_weekday]
+            if missing:
+                st.warning(f"Couldn't find Hayom Yom for {', '.join(missing)} in this week's Dvar Malchus, so those days are not in this PDF.")
+            if "Hayom Yom-Hebrew" in opt:
+                booklet_pages = sorted({page for weekday in dow if weekday in by_weekday for page in by_weekday[weekday]["pages"]})
+            if "Hayom Yom-Bilingual" in opt:
+                try:
+                    week_dates = chabad_texts.booklet_week_dates(days, date.today())
+                except Exception:
+                    logger.warning("Couldn't date the booklet's Hayom Yom", exc_info=True)
+                    week_dates = {}
                 for weekday in dow:
+                    if weekday not in by_weekday:
+                        continue
                     try:
-                        sections.append(chabad_texts.hayomyom_booklet_section(week_dates[weekday], by_weekday[weekday]["entries"], language))
+                        sections.append(chabad_texts.hayomyom_booklet_section(week_dates[weekday], by_weekday[weekday]["entries"], "both"))
                     except Exception:
-                        logger.warning("Booklet Hayom Yom failed for %s", weekday, exc_info=True)
-                        st.warning(f"Couldn't read Hayom Yom for {weekday} from this week's Dvar Malchus, so that day is not in this PDF.")
+                        logger.warning("Bilingual Hayom Yom failed for %s", weekday, exc_info=True)
+                        st.warning(f"Couldn't build Bilingual Hayom Yom for {weekday}, so that day is not in this PDF.")
     if "Hayom Yom" in opt:
         for day in _chabad_dates(dor):
             try:
@@ -334,8 +343,21 @@ def hayomyom(dor, dow, session, opt, source): # Hayom Yom: English from chabad.o
             except Exception:
                 logger.warning("Hayom Yom failed for %s", day, exc_info=True)
                 st.warning(f"Couldn't get Hayom Yom for {day.strftime('%A')} from Chabad.org, so that day is not in this PDF.")
+    if not booklet_pages and not sections:
+        return
+    out = fitz.open()
+    if booklet_pages:
+        with fitz.open(f"dvar{session2}.pdf") as booklet:
+            for page in booklet_pages:
+                out.insert_pdf(booklet, from_page=page, to_page=page)
     if sections:
-        _chabad_pdf("hayomyom", sections, scale3, f"Hayom{session}.pdf")
+        pdf = render_html_to_pdf(chabad_texts.page("hayomyom", sections),
+                                 {"scale": scale3, "printBackground": True, "preferCSSPageSize": True})
+        with fitz.open(stream=b64decode(pdf["data"]), filetype="pdf") as rendered:
+            out.insert_pdf(rendered)
+    out.save(f"Hayom{session}.pdf.tmp")
+    out.close()
+    os.replace(f"Hayom{session}.pdf.tmp", f"Hayom{session}.pdf")
 
 SEFARIA_API_BASE = "https://www.sefaria.org/api"
 WEEKDAY_TO_NUM = {'Monday': 0, 'Tuesday': 1, 'Wednesday': 2, 'Thursday': 3, 'Friday': 4, 'Shabbos': 5, 'Sunday': 6}
@@ -1109,8 +1131,9 @@ def _booklet_fix_date(text):
     return text
 
 def booklet_hayomyom(doc, toc):
-    """[{"weekday": "יום ראשון", "entries": [{"date": "כא חשון", "paragraphs": [("p", text) |
-    ("label", "תרגום")]}]}] in booklet order, or None if there's no Hayom Yom section."""
+    """[{"weekday": "יום ראשון", "pages": [0-based booklet pages the day is printed on],
+    "entries": [{"date": "כא חשון", "paragraphs": [("p", text) | ("label", "תרגום")]}]}] in
+    booklet order, or None if there's no Hayom Yom section."""
     index = next((i for i, (level, title, page) in enumerate(toc)
                   if level == 1 and "היום יום" in _booklet_title_key(title) and page > 0), None)
     if index is None:
@@ -1138,6 +1161,7 @@ def booklet_hayomyom(doc, toc):
                 if text == "תרגום" and entry is not None:
                     entry["paragraphs"].append(("label", "תרגום"))
                     entry["open"] = False
+                    day["pages"].add(page_number)
                 continue
             if not font.startswith("GuttmanFrank"):
                 continue  # another section sharing the page
@@ -1145,16 +1169,18 @@ def booklet_hayomyom(doc, toc):
                 label = next((m for m in margin if not m["used"] and abs(m["y"] - line["y"]) <= 8), None)
                 if label is not None:
                     label["used"] = True
-                    day = {"weekday": label["name"], "entries": []}
+                    day = {"weekday": label["name"], "entries": [], "pages": set()}
                     days.append(day)
                 if day is None:
                     continue
+                day["pages"].add(page_number)
                 entry = {"date": _booklet_fix_date(text), "paragraphs": [], "open": False}
                 day["entries"].append(entry)
                 header_rows.append(line["y"])
                 continue
             if entry is None or any(abs(line["y"] - y) <= 6 for y in header_rows):
                 continue  # the original entry's year and weekday, on the date's row
+            day["pages"].add(page_number)
             if line["x1"] < 380:
                 continue  # שיעורים
             if entry["open"] and entry["paragraphs"] and entry["paragraphs"][-1][0] == "p":
@@ -1164,6 +1190,7 @@ def booklet_hayomyom(doc, toc):
                 entry["paragraphs"].append(("p", text))
             entry["open"] = line["x0"] < 45  # a paragraph's last line stops short of the left margin
     for found in days:
+        found["pages"] = sorted(found["pages"])
         for e in found["entries"]:
             e.pop("open", None)
     return days
@@ -1409,7 +1436,7 @@ DVAR_ONLY = {"Hayom Yom-Hebrew": "Hebrew Hayom Yom", "Hayom Yom-Bilingual": "Bil
              'Project Likutei Sichos (Hebrew)': "Likutei Sichos", 'Maamarim': "Maamarim",
              'Krias Hatorah (includes Haftorah)': "Krias HaTorah", 'Haftorah': "the Haftorah"}
 for key, value in (("days", []), ("whole_week", False), ("print_size", "Standard"), ("chumash_layout", "Two columns"),
-                   ("use_dvar", True), *((k, 100) for k in SIZE_KEYS)):
+                   ("use_dvar", True), ("advanced_open", False), *((k, 100) for k in SIZE_KEYS)):
     st.session_state.setdefault(key, value)
 
 def _whole_week_changed():
@@ -1419,7 +1446,10 @@ def _days_changed():
     st.session_state.whole_week = set(st.session_state.days or []) == set(ALL_DAYS)
 
 def _print_size_changed():
-    # A preset sets every size, and the Chumash layout that suits it.
+    # A preset sets every size, and the Chumash layout that suits it. Custom opens Advanced
+    # options, where the sizes are.
+    if st.session_state.print_size == "Custom":
+        st.session_state.advanced_open = True
     size = PRINT_SIZES.get(st.session_state.print_size)
     if size is not None:
         for key in SIZE_KEYS:
@@ -1497,7 +1527,8 @@ with st.container(border=True): # the choices; not a st.form, so linked choices 
         tanyaopts = st.pills("Tanya", options=TANYA_NAMES, selection_mode="multi", format_func=language_label, key="tanya_pick")
         hayomopts = st.pills("Hayom Yom", options=HAYOM_YOM_NAMES, selection_mode="multi", format_func=language_label,
                              key="hayom_pick", on_change=_dvar_only_picked,
-                             help="Hebrew and Bilingual Hayom Yom need Dvar Malchus: Chabad.org only has the English.")
+                             help="Hebrew and Bilingual Hayom Yom need Dvar Malchus (Chabad.org only has the English). "
+                                  "Hebrew is the booklet's own pages, so a page can show the days next to yours too.")
     with learning_right:
         rambam3opts = st.pills("Rambam · 3 chapters a day", options=['Rambam (3)-Hebrew', 'Rambam (3)-Bilingual', 'Rambam (3)-English'],
                                selection_mode="multi", format_func=language_label, key="rambam3_pick")
@@ -1533,7 +1564,7 @@ with st.container(border=True): # the choices; not a st.form, so linked choices 
             down_col.button("↓", key=f"down_{group}", on_click=_move_group, args=(group, 1), disabled=n == len(shown) - 1, help="Move down")
         if shown and st.session_state.pdf_order != list(ORDER_GROUPS):
             st.button("Reset to the usual order", on_click=_reset_order)
-    with st.expander("Advanced options"):
+    with st.expander("Advanced options", key="advanced_open", on_change="rerun"):
         cover = st.checkbox('Include the cover page from Dvar Malchus', value=False)
         st.caption("Text size for each material. Picking a Text size above sets these; changing one switches it to Custom.")
         scaleslide = st.slider('Chumash', 30, 150, format="%d%%", key="size_chumash", on_change=_size_changed)
@@ -1695,7 +1726,7 @@ st.markdown("**Any major bugs noticed? Features that you'd like to see? Comments
 
 if not submit_button:
     with st.expander("**Changelog:**"):
-        st.markdown("**New in latest update (11-5-26)**: <br/> **[FIX]** Rambam in Hebrew (3 chapters and 1 chapter) was missing from PDFs made from Dvar Malchus for the last few weeks, because the booklet changed how it writes רמב״ם in its titles. It is back. <br/> **[FIX]** Chumash and Tanya no longer fall back to estimated page ranges when a day starts at the very top of a page, or when the booklet's Tanya bookmark points to the wrong page. This week that had added most of Tanya to the end of Chumash for Shabbos. <br/> **[NEW]** If a section you picked can't be found in this week's Dvar Malchus, the app now tells you, instead of quietly leaving it out. <br/> **[FIX]** Maamarim are back. For most weeks since the summer the booklet has titled that section מאמרים instead of מאמר, so the app found nothing and left them out of the PDF. <br/> **[FIX]** The Haftorah no longer prints twice. In some weeks, this one included, it came out twice. <br/> **[FIX]** Krias Hatorah now ends on the right page. Some weeks it cut off the last page of the Haftorah or added a page of the Shabbos Mincha reading. <br/> **[FIX]** Shnayim Mikra no longer crashes the app in weeks when Shabbos is Yom Tov, and it now works for אחרי מות-קדושים and נצבים-וילך. <br/> **[FIX]** Making a second PDF in the same tab with different days or options no longer reuses the Chumash, Tanya, Rambam or Hayom Yom from the first one. <br/> **[FIX]** Picking a Hebrew Rambam together with an English or Bilingual one now gives you both, instead of the Hebrew twice. <br/> **[NEW]** If Likutei Sichos, Krias Hatorah, the Haftorah or Shnayim Mikra can't be found, or you pick something that only comes from Dvar Malchus while it isn't being used, the app now tells you. <br/> **[NEW]** Chumash with Rashi, Tanya, Rambam and Hayom Yom from Chabad.org are back, in a new print layout: Hebrew with full cantillation, Bilingual Rambam side by side, and a header on each day with the English and Hebrew date and the portion. Chabad.org's daily study pages had started blocking the app, so these were coming from Sefaria instead, and Hayom Yom, which only Chabad.org has, was missing from every PDF. They now come from Chabad.org's online library and take a second or two instead of minutes. <br/> **[NEW]** Tanya now has its own row, like Rambam: Hebrew, Bilingual (side by side) and English. The English is Lessons in Tanya, with its explanation printed in gray so the translation stands out. <br/> **[NEW]** Chumash now has its own row too: Hebrew, and Bilingual (English and Hebrew side by side, each with its Rashi). From Chabad.org each pasuk is followed by its Rashi, in block letters, and the Hebrew prints in two columns, which takes about a quarter fewer pages. <br/> **[CHANGE]** English and Bilingual Rambam leave out the translator's footnotes, which more than doubled the length of a day's printout. <br/> **[NEW]** You can now pick more than one Rambam option from Chabad.org; each is included. Before, only the first one came through. <br/> **[NEW]** A clearer form: pick the days (or the whole week), then each material's languages (Hebrew, Bilingual, English), then the weekly items, then how it prints. <br/> **[NEW]** Text size presets: Space saving, Standard and Large print, or Custom sizes per material under Advanced options. <br/> **[NEW]** Hebrew Chumash can print in one column or two. <br/> **[NEW]** Hayom Yom in Hebrew and Bilingual, from this week's Dvar Malchus (the Hebrew isn't available from Chabad.org), next to Chabad.org's English for Bilingual.", unsafe_allow_html=True)
+        st.markdown("**New in latest update (11-5-26)**: <br/> **[FIX]** Rambam in Hebrew (3 chapters and 1 chapter) was missing from PDFs made from Dvar Malchus for the last few weeks, because the booklet changed how it writes רמב״ם in its titles. It is back. <br/> **[FIX]** Chumash and Tanya no longer fall back to estimated page ranges when a day starts at the very top of a page, or when the booklet's Tanya bookmark points to the wrong page. This week that had added most of Tanya to the end of Chumash for Shabbos. <br/> **[NEW]** If a section you picked can't be found in this week's Dvar Malchus, the app now tells you, instead of quietly leaving it out. <br/> **[FIX]** Maamarim are back. For most weeks since the summer the booklet has titled that section מאמרים instead of מאמר, so the app found nothing and left them out of the PDF. <br/> **[FIX]** The Haftorah no longer prints twice. In some weeks, this one included, it came out twice. <br/> **[FIX]** Krias Hatorah now ends on the right page. Some weeks it cut off the last page of the Haftorah or added a page of the Shabbos Mincha reading. <br/> **[FIX]** Shnayim Mikra no longer crashes the app in weeks when Shabbos is Yom Tov, and it now works for אחרי מות-קדושים and נצבים-וילך. <br/> **[FIX]** Making a second PDF in the same tab with different days or options no longer reuses the Chumash, Tanya, Rambam or Hayom Yom from the first one. <br/> **[FIX]** Picking a Hebrew Rambam together with an English or Bilingual one now gives you both, instead of the Hebrew twice. <br/> **[NEW]** If Likutei Sichos, Krias Hatorah, the Haftorah or Shnayim Mikra can't be found, or you pick something that only comes from Dvar Malchus while it isn't being used, the app now tells you. <br/> **[NEW]** Chumash with Rashi, Tanya, Rambam and Hayom Yom from Chabad.org are back, in a new print layout: Hebrew with full cantillation, Bilingual Rambam side by side, and a header on each day with the English and Hebrew date and the portion. Chabad.org's daily study pages had started blocking the app, so these were coming from Sefaria instead, and Hayom Yom, which only Chabad.org has, was missing from every PDF. They now come from Chabad.org's online library and take a second or two instead of minutes. <br/> **[NEW]** Tanya now has its own row, like Rambam: Hebrew, Bilingual (side by side) and English. The English is Lessons in Tanya, with its explanation printed in gray so the translation stands out. <br/> **[NEW]** Chumash now has its own row too: Hebrew, and Bilingual (English and Hebrew side by side, each with its Rashi). From Chabad.org each pasuk is followed by its Rashi, in block letters, and the Hebrew prints in two columns, which takes about a quarter fewer pages. <br/> **[CHANGE]** English and Bilingual Rambam leave out the translator's footnotes, which more than doubled the length of a day's printout. <br/> **[NEW]** You can now pick more than one Rambam option from Chabad.org; each is included. Before, only the first one came through. <br/> **[NEW]** A clearer form: pick the days (or the whole week), then each material's languages (Hebrew, Bilingual, English), then the weekly items, then how it prints. <br/> **[NEW]** Text size presets: Space saving, Standard and Large print, or Custom sizes per material under Advanced options. <br/> **[NEW]** Hebrew Chumash can print in one column or two. <br/> **[NEW]** Hayom Yom in Hebrew and Bilingual, from this week's Dvar Malchus (the Hebrew isn't available from Chabad.org). Hebrew is the booklet's own pages; Bilingual sets the booklet's Hebrew next to Chabad.org's English.", unsafe_allow_html=True)
         st.markdown("**Past Changes (7-19-26)**: <br/> **[FIX]** Days taken from Dvar Malchus now include their full shiur. Because a day's learning ends partway down a page rather than at a page break, the app used to cut some days short or add a page of the next day — Tanya was losing the end of most days every week. Day boundaries are now found on the page itself instead of being estimated. <br/> **[NEW]** Rambam (1 chapter) in Hebrew now comes from Dvar Malchus like the 3-chapter cycle, instead of always falling back to Chabad.org. <br/> **[FIX]** Selecting more than one Rambam option at once no longer repeats the same section twice. <br/> **[NEW]** Dvar Malchus downloads are much faster (a couple of seconds instead of around forty) — the app now fetches the booklet directly rather than driving a browser, falling back to the old method if needed.", unsafe_allow_html=True)
         st.markdown("**Past Changes (7-3-26)**: <br/> **[FIX]** Fixed a crash when two people generated a booklet from Dvar Malchus at nearly the same time. <br/> **[NEW]** Modernized the app's dependencies (Streamlit and others) and swapped out a few unmaintained UI components for Streamlit's own native ones. <br/> **[NEW]** Added a custom dark theme. <br/> **[NEW]** Chumash/Tanya/Rambam/Hayom Yom fetches are now shared across everyone requesting the same day, so repeat generations are faster and put less load on Chabad.org.", unsafe_allow_html=True)
         st.markdown("**Past Changes (7-2-26)**: <br/> **[FIX]** Dvar Malchus downloads were silently failing in headless mode; fixed by explicitly allowing Chrome to save the file. <br/> **[FIX]** Chabad.org's daily study pages had started intermittently failing (an anti-bot check); fetches now retry automatically with a fresh session before giving up. <br/> **[NEW]** Added Sefaria as a 3rd fallback source for Chumash (with Rashi), Tanya, and Rambam if both Dvar Malchus and Chabad.org are unavailable, including correct handling of combined/double-parsha weeks. <br/> **[FIX]** Bilingual Rambam now shows Hebrew and English side by side instead of one after the other. <br/> **[FIX]** A single Chabad.org or Sefaria hiccup on one material no longer crashes the whole app.", unsafe_allow_html=True)
